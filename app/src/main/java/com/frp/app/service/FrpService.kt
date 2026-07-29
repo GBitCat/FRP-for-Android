@@ -1,0 +1,307 @@
+package com.frp.app.service
+
+import android.app.Notification
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.IBinder
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.frp.app.FrpApplication
+import com.frp.app.MainActivity
+import com.frp.app.R
+import com.frp.app.data.AppDatabase
+import com.frp.app.data.ConfigGenerator
+import com.frp.app.data.FrpStatus
+import com.frp.app.data.FrpStatusHolder
+import com.frp.app.manager.ConnectionStatusParser
+import com.frp.app.manager.ConnectionType
+import com.frp.app.manager.FrpManager
+import com.frp.app.manager.LogLevel
+import com.frp.app.manager.LogManager
+import kotlinx.coroutines.*
+
+class FrpService : Service() {
+    
+    private lateinit var frpManager: FrpManager
+    private lateinit var configGenerator: ConfigGenerator
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    
+    companion object {
+        private const val TAG = "FrpService"
+        private const val NOTIFICATION_ID = 1
+        
+        const val ACTION_START = "com.frp.app.START_FRP"
+        const val ACTION_STOP = "com.frp.app.STOP_FRP"
+        const val EXTRA_CONFIG_ID = "config_id"
+        
+        val logManager = LogManager()
+        
+        fun startService(context: Context, configId: Long) {
+            val intent = Intent(context, FrpService::class.java).apply {
+                action = ACTION_START
+                putExtra(EXTRA_CONFIG_ID, configId)
+            }
+            context.startForegroundService(intent)
+        }
+        
+        fun stopService(context: Context) {
+            val intent = Intent(context, FrpService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+    }
+    
+    override fun onCreate() {
+        super.onCreate()
+        frpManager = FrpManager(this)
+        configGenerator = ConfigGenerator(this)
+        logManager.addLog(LogLevel.INFO, TAG, "Service created")
+    }
+    
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 立即启动前台服务，避免ForegroundServiceDidNotStartInTimeException
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, createNotification("Starting FRP..."), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification("Starting FRP..."))
+        }
+        
+        when (intent?.action) {
+            ACTION_START -> {
+                val configId = intent.getLongExtra(EXTRA_CONFIG_ID, -1)
+                if (configId != -1L) {
+                    startFrp(configId)
+                } else {
+                    logManager.addLog(LogLevel.INFO, TAG, "No linked config found")
+                    stopSelf()
+                }
+            }
+            ACTION_STOP -> {
+                stopFrp()
+            }
+            else -> {
+                stopSelf()
+            }
+        }
+        return START_STICKY
+    }
+    
+    override fun onBind(intent: Intent?): IBinder? {
+        return null
+    }
+    
+    private fun startFrp(configId: Long) {
+        serviceScope.launch {
+            try {
+                logManager.addLog(LogLevel.INFO, TAG, "Starting FRP with config ID: $configId")
+                
+                val database = AppDatabase.getDatabase(this@FrpService)
+                val config = database.frpConfigDao().getConfigById(configId)
+                
+                if (config == null) {
+                    logManager.addLog(LogLevel.ERROR, TAG, "Config not found: $configId")
+                    FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
+                    updateNotification("Error: Config not found")
+                    delay(2000)
+                    stopSelf()
+                    return@launch
+                }
+                
+                logManager.addLog(LogLevel.INFO, TAG, "Config loaded: ${config.name}")
+                
+                // 加载全局服务器连接配置
+                val server = database.serverConfigDao().getServerConfigSync()
+                if (server == null || !server.isValid()) {
+                    logManager.addLog(LogLevel.ERROR, TAG, "Server not configured. Please set server address on main screen.")
+                    FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
+                    updateNotification("Error: Server not configured")
+                    delay(2000)
+                    stopSelf()
+                    return@launch
+                }
+                logManager.addLog(LogLevel.INFO, TAG, "Server: ${server.serverAddr}:${server.serverPort}")
+                
+                logManager.addLog(LogLevel.INFO, TAG, "Config useFallback: ${config.useFallback}, fallbackTo: ${config.fallbackTo}")
+                val linkedConfig = if (config.useFallback && config.fallbackTo.isNotBlank()) {
+                    val allConfigs = database.frpConfigDao().getAllConfigsSync()
+                    val found = allConfigs.find { it.name == config.fallbackTo && it.protocol == "stcp" }
+                    logManager.addLog(LogLevel.INFO, TAG, "Linked config found: ${found?.name ?: "none"}")
+                    found
+                } else {
+                    logManager.addLog(LogLevel.INFO, TAG, "No linked config needed")
+                    null
+                }
+                val configFile = configGenerator.saveConfigFile(server, config, linkedConfig)
+                logManager.addLog(LogLevel.INFO, TAG, "Config file saved: ${configFile.absolutePath}")
+                
+                frpManager.stopFrpc()  // 先停止现有进程
+                if (true) {  // 总是安装frpc
+                    logManager.addLog(LogLevel.INFO, TAG, "Installing frpc binary...")
+                    val installed = frpManager.installFrpc()
+                    if (!installed) {
+                        logManager.addLog(LogLevel.ERROR, TAG, "Failed to install frpc")
+                        FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
+                        updateNotification("Error: frpc not found")
+                        delay(2000)
+                        stopSelf()
+                        return@launch
+                    }
+                }
+                
+                updateNotification("Connecting to ${config.name}...")
+                
+                logManager.addLog(LogLevel.INFO, TAG, "Starting frpc process...")
+                val started = frpManager.startFrpc(configFile.absolutePath, { logLine ->
+                    logManager.addFrpLog(logLine)
+                }) { exitCode ->
+                    // frpc 意外退出
+                    logManager.addLog(LogLevel.ERROR, TAG, "frpc exited unexpectedly (code $exitCode)")
+                    FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
+                    updateNotification("Error: frpc exited (code $exitCode)")
+                }
+                
+                if (started) {
+                    database.frpConfigDao().updateActiveStatus(configId, true)
+                    FrpStatusHolder.set(this@FrpService, FrpStatus.RUNNING)
+                    activeConfigName = config.name
+                    updateNotification("FRP is running: ${config.name}")
+                    startConnectionStatusMonitor()
+                    logManager.addLog(LogLevel.INFO, TAG, "FRP started successfully")
+                } else {
+                    logManager.addLog(LogLevel.INFO, TAG, "No linked config found")
+                    logManager.addLog(LogLevel.ERROR, TAG, "Failed to start FRP process")
+                    FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
+                    updateNotification("Error: Failed to start")
+                    delay(2000)
+                    stopSelf()
+                }
+                
+            } catch (e: Exception) {
+                logManager.addLog(LogLevel.ERROR, TAG, "Error starting FRP: ${e.message}")
+                Log.e(TAG, "Error starting FRP", e)
+                FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
+                updateNotification("Error: ${e.message}")
+                delay(2000)
+                stopSelf()
+            }
+        }
+    }
+    
+    private fun stopFrp() {
+        serviceScope.launch {
+            try {
+                logManager.addLog(LogLevel.INFO, TAG, "Stopping FRP...")
+                
+                frpManager.stopFrpc()
+                connectionStatusJob?.cancel()
+                FrpStatusHolder.set(this@FrpService, FrpStatus.STOPPED)
+                
+                val database = AppDatabase.getDatabase(this@FrpService)
+                val activeConfig = database.frpConfigDao().getActiveConfig()
+                activeConfig?.let {
+                    database.frpConfigDao().updateActiveStatus(it.id, false)
+                    logManager.addLog(LogLevel.INFO, TAG, "Config '${it.name}' deactivated")
+                }
+                
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                
+                logManager.addLog(LogLevel.INFO, TAG, "FRP stopped")
+            } catch (e: Exception) {
+                logManager.addLog(LogLevel.ERROR, TAG, "Error stopping FRP: ${e.message}")
+                Log.e(TAG, "Error stopping FRP", e)
+            }
+        }
+    }
+    
+    // 连接状态监听：通知栏实时显示 P2P/中转
+    private var connectionStatusJob: Job? = null
+    private var activeConfigName: String = ""
+
+    private fun startConnectionStatusMonitor() {
+        connectionStatusJob?.cancel()
+        connectionStatusJob = serviceScope.launch {
+            ConnectionStatusParser(logManager, serviceScope).status.collect { status ->
+                if (status.type != ConnectionType.UNKNOWN) {
+                    val subtitle = when (status.type) {
+                        ConnectionType.P2P -> "P2P Direct"
+                        ConnectionType.RELAY -> "Relay (STCP)"
+                        ConnectionType.ERROR -> status.detail
+                        ConnectionType.UNKNOWN -> ""
+                    }
+                    updateNotificationWithSubtitle("", subtitle)
+                }
+            }
+        }
+    }
+
+    private fun createNotification(contentText: String, subtitle: String? = null): Notification {
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, FrpService::class.java).apply {
+                action = ACTION_STOP
+            },
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        val builder = NotificationCompat.Builder(this, FrpApplication.CHANNEL_ID)
+            .setContentTitle("FRP Service")
+            .setContentText(contentText)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(pendingIntent)
+            .addAction(R.drawable.ic_stop, "Stop", stopIntent)
+            .setOngoing(true)
+
+        if (subtitle != null) {
+            builder.setSubText(subtitle)
+        }
+
+        return builder.build()
+    }
+    
+    private fun updateNotification(contentText: String) {
+        val notification = createNotification(contentText)
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun updateNotificationWithSubtitle(title: String, subtitle: String) {
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
+        )
+        val stopIntent = PendingIntent.getService(
+            this, 1, Intent(this, FrpService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, FrpApplication.CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(subtitle)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(pendingIntent)
+            .addAction(R.drawable.ic_stop, "Stop", stopIntent)
+            .setOngoing(true)
+            .build()
+        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        nm.notify(NOTIFICATION_ID, notification)
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        frpManager.cleanup()
+        serviceScope.cancel()
+        logManager.addLog(LogLevel.INFO, TAG, "Service destroyed")
+    }
+}

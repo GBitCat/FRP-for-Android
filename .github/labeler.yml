@@ -1,0 +1,31 @@
+# Add 'android' label to any changes within the 'app' folder
+android:
+  - any: ['app/**/*']
+
+# Add 'kotlin' label to any changes to Kotlin files
+kotlin:
+  - any: ['**/*.kt']
+
+# Add 'gradle' label to any changes to Gradle files
+gradle:
+  - any: ['**/*.gradle', '**/*.gradle.kts']
+
+# Add 'xml' label to any changes to XML files
+xml:
+  - any: ['**/*.xml']
+
+# Add 'documentation' label to any changes to markdown files
+documentation:
+  - any: ['**/*.md']
+
+# Add 'github' label to any changes to GitHub configuration files
+github:
+  - any: ['.github/**/*']
+
+# Add 'scripts' label to any changes to script files
+scripts:
+  - any: ['scripts/**/*']
+
+# Add 'tests' label to any changes to test files
+tests:
+  - any: ['**/*Test*', '**/*test*']

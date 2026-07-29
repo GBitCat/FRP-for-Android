@@ -1,0 +1,35 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Custom for Android Studio
+*.java text diff=java
+*.kt text diff=kotlin
+*.gradle text diff=java
+*.xml text diff=xml
+
+# Graphics
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.webp binary
+
+# Archives
+*.gz binary
+*.zip binary
+*.tar binary
+*.7z binary
+
+# Fonts
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.eot binary
+
+# Android
+*.apk binary
+*.aab binary
+*.aar binary
+
+# Go binaries
+frpc binary

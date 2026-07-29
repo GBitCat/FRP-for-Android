@@ -1,0 +1,17 @@
+# These owners will be automatically requested for review
+# when someone opens a pull request.
+#
+# Global rule:
+* @gbitcat
+
+# Android app code
+app/ @gbitcat
+
+# Build scripts
+scripts/ @gbitcat
+
+# Documentation
+*.md @gbitcat
+
+# GitHub configuration
+.github/ @gbitcat
