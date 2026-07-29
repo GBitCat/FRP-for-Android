@@ -1,0 +1,29 @@
+name: Auto Cleanup
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  packages: write
+  contents: write
+
+jobs:
+  auto-cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          
+      - name: Cleanup Docker
+        run: |
+          docker system prune -af
+          
+      - name: Cleanup apt
+        run: |
+          sudo apt-get clean
+          sudo apt-get autoremove -y
