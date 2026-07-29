@@ -60,6 +60,8 @@ class ConfigGenerator(private val context: Context) {
             server.token.takeIf { it.isNotBlank() }?.let {
                 appendLine("auth.token = \"$it\"")
             }
+            // STUN server with IP address to bypass Android DNS limitation
+            appendLine("natHoleStunServer = \"74.125.24.127:19302\"")
             appendLine()
             
             if (linkedConfig != null) {
