@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.*
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 
 class FrpManager(private val context: Context) {
@@ -81,10 +82,21 @@ class FrpManager(private val context: Context) {
         Log.d(TAG, "Using frpc at: " + frpcFile.absolutePath)
         
         return try {
+            // 写入自定义 resolv.conf，让 Go DNS 解析器使用公共 DNS（绕过 Android DNS 限制）
+            val resolvConf = File(context.filesDir, "resolv.conf")
+            resolvConf.writeText("nameserver 8.8.8.8\nnameserver 114.114.114.114\nnameserver 1.1.1.1\n")
+            
             val processBuilder = ProcessBuilder(
                 frpcFile.absolutePath,
                 "-c", configPath
             )
+            
+            // 设置环境变量：强制 Go 使用纯 Go DNS 解析器 + 指定 resolv.conf 路径
+            val env = processBuilder.environment()
+            env["GODEBUG"] = "netdns=go"
+            env["RES_OPTIONS"] = "ndots:1"
+            // 部分 Go 版本支持自定义 resolv.conf 路径
+            env["RESOLV_CONF"] = resolvConf.absolutePath
             
             processBuilder.redirectErrorStream(true)
             frpcProcess = processBuilder.start()
