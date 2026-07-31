@@ -38,9 +38,14 @@ class ConfigGenerator(private val context: Context) {
                             appendLine("bindAddr = \"${config.bindAddr}\"")
                         }
                         appendLine("bindPort = ${config.bindPort}")
-                        if (config.protocol == "xtcp" && config.useFallback && config.fallbackTo.isNotBlank()) {
-                            appendLine("fallbackTo = \"${config.fallbackTo}\"")
-                            appendLine("fallbackTimeoutMs = ${config.fallbackTimeoutMs}")
+                        if (config.protocol == "xtcp") {
+                            // 保持 P2P 隧道常开：frpc 启动即打洞并定期检测，
+                            // 避免连接到达时才冷启动打洞（2~4s）导致回落 STCP
+                            appendLine("keepTunnelOpen = true")
+                            if (config.useFallback && config.fallbackTo.isNotBlank()) {
+                                appendLine("fallbackTo = \"${config.fallbackTo}\"")
+                                appendLine("fallbackTimeoutMs = ${config.fallbackTimeoutMs}")
+                            }
                         }
                     } else {
                         appendLine("[[proxies]]")

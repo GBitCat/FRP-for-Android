@@ -78,7 +78,7 @@ fun ConfigEditScreen(
     
     // XTCP 回落配置
     var useFallback by remember { mutableStateOf(false) }
-    var fallbackTimeoutMs by remember { mutableStateOf("200") }
+    var fallbackTimeoutMs by remember { mutableStateOf("3000") }
     var fallbackTo by remember { mutableStateOf("") }
     
     // STCP Fallback 独立配置状态
@@ -170,7 +170,7 @@ fun ConfigEditScreen(
                                 } else "",
                                 
                                 
-                                fallbackTimeoutMs = fallbackTimeoutMs.toIntOrNull() ?: 200,
+                                fallbackTimeoutMs = fallbackTimeoutMs.toIntOrNull() ?: 3000,
                                 useCustomStcp = useCustomStcp,
                                 stcpName = stcpName.ifBlank { autoStcpName },
                                 stcpSecretKey = stcpSecretKey.ifBlank { secretKey },
@@ -707,7 +707,7 @@ fun ConfigEditScreen(
                         useFallback = useFallback,
                         fallbackTo = if (useCustomStcp) stcpName.ifBlank { autoStcpName } else autoStcpName,
                         
-                                fallbackTimeoutMs = fallbackTimeoutMs.toIntOrNull() ?: 200,
+                                fallbackTimeoutMs = fallbackTimeoutMs.toIntOrNull() ?: 3000,
                                 useCustomStcp = useCustomStcp,
                                 stcpName = stcpName.ifBlank { autoStcpName },
                                 stcpSecretKey = stcpSecretKey.ifBlank { secretKey },
