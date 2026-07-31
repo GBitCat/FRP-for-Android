@@ -3,6 +3,7 @@ package com.frp.app.manager
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,23 +21,41 @@ data class ConnectionStatus(
     val detail: String = ""
 )
 
-class ConnectionStatusParser(
-    private val logManager: LogManager,
-    private val scope: CoroutineScope
-) {
+/**
+ * 连接状态解析器（全局单例）：解析 frpc 日志，识别 P2P / 中转 / 错误。
+ *
+ * Service 与 UI 共享同一实例，避免重复解析、重复日志与状态竞争。
+ * Service 启动 FRP 时调用 [start]，停止时调用 [stop] + [reset]。
+ */
+class ConnectionStatusParser private constructor() {
+
     companion object {
         private const val TAG = "ConnStatus"
         private val ANSI_REGEX = Regex("\u001B\\[[;\\d]*m")
+
+        @Volatile
+        private var INSTANCE: ConnectionStatusParser? = null
+
+        fun getInstance(): ConnectionStatusParser =
+            INSTANCE ?: synchronized(this) {
+                INSTANCE ?: ConnectionStatusParser().also { INSTANCE = it }
+            }
     }
 
     private val _status = MutableStateFlow(ConnectionStatus())
     val status: StateFlow<ConnectionStatus> = _status.asStateFlow()
 
     private var lastLogCount = 0
+    private var collectJob: Job? = null
 
-    init {
-        scope.launch(Dispatchers.Default) {
+    /** 开始监听日志；重复调用会先取消旧监听再重新开始（保留已解析进度，不重复解析旧日志） */
+    @Synchronized
+    fun start(logManager: LogManager, scope: CoroutineScope) {
+        collectJob?.cancel()
+        collectJob = scope.launch(Dispatchers.Default) {
             logManager.logs.collect { logs ->
+                // 日志被清空后重新基线
+                if (logs.size < lastLogCount) lastLogCount = 0
                 if (logs.size > lastLogCount) {
                     val newLogs = logs.drop(lastLogCount)
                     lastLogCount = logs.size
@@ -46,6 +65,18 @@ class ConnectionStatusParser(
         }
     }
 
+    /** 停止监听（FRP 停止时调用） */
+    @Synchronized
+    fun stop() {
+        collectJob?.cancel()
+        collectJob = null
+    }
+
+    /** 重置当前状态（FRP 停止时调用） */
+    fun reset() {
+        _status.value = ConnectionStatus()
+    }
+
     private fun parseNewLogs(logs: List<LogEntry>) {
         for (log in logs) {
             if (log.tag != "frpc") continue
@@ -53,6 +84,11 @@ class ConnectionStatusParser(
 
             // === XTCP P2P 成功 ===
             if (msg.contains("nathole traffic", ignoreCase = true)) {
+                updateStatus(ConnectionType.P2P, "P2P via XTCP")
+                continue
+            }
+            // frp v0.70.1: MakeHole 成功并初始化隧道会话 —— 确定性的 P2P 成功信号
+            if (msg.contains("establishing nat hole connection successful", ignoreCase = true)) {
                 updateStatus(ConnectionType.P2P, "P2P via XTCP")
                 continue
             }
@@ -114,10 +150,5 @@ class ConnectionStatusParser(
             _status.value = ConnectionStatus(type, detail)
             Log.d(TAG, "Connection status: $type - $detail")
         }
-    }
-
-    fun reset() {
-        lastLogCount = 0
-        _status.value = ConnectionStatus()
     }
 }

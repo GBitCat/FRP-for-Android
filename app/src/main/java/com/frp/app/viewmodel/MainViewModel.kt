@@ -31,7 +31,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
     private val repository = FrpConfigRepository(database.frpConfigDao(), database.serverConfigDao())
     private val frpManager = FrpManager(application)
-    private val connectionStatusParser = ConnectionStatusParser(FrpService.logManager, viewModelScope)
+    private val connectionStatusParser = ConnectionStatusParser.getInstance()
     val connectionStatus = connectionStatusParser.status
     
     val allConfigs = repository.allConfigs

@@ -199,6 +199,8 @@ class FrpService : Service() {
                 
                 frpManager.stopFrpc()
                 connectionStatusJob?.cancel()
+                ConnectionStatusParser.getInstance().stop()
+                ConnectionStatusParser.getInstance().reset()
                 FrpStatusHolder.set(this@FrpService, FrpStatus.STOPPED)
                 
                 val database = AppDatabase.getDatabase(this@FrpService)
@@ -224,9 +226,10 @@ class FrpService : Service() {
     private var activeConfigName: String = ""
 
     private fun startConnectionStatusMonitor() {
+        ConnectionStatusParser.getInstance().start(logManager, serviceScope)
         connectionStatusJob?.cancel()
         connectionStatusJob = serviceScope.launch {
-            ConnectionStatusParser(logManager, serviceScope).status.collect { status ->
+            ConnectionStatusParser.getInstance().status.collect { status ->
                 if (status.type != ConnectionType.UNKNOWN) {
                     val subtitle = when (status.type) {
                         ConnectionType.P2P -> "P2P Direct"
