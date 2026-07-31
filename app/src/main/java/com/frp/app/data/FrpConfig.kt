@@ -27,7 +27,7 @@ data class FrpConfig(
     // XTCP 回落配置
     val useFallback: Boolean = false,
     val fallbackTo: String = "",
-    val fallbackTimeoutMs: Int = 200,
+    val fallbackTimeoutMs: Int = 3000,
     val useCustomStcp: Boolean = false,
     
     // STCP Fallback 自定义配置
