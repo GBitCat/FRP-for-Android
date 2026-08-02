@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [FrpConfig::class, ServerConfig::class], version = 9, exportSchema = false)
+@Database(entities = [FrpConfig::class, ServerConfig::class], version = 10, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     
     abstract fun frpConfigDao(): FrpConfigDao
@@ -51,6 +51,16 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `frp_configs` ADD COLUMN `useCompression` INTEGER NOT NULL DEFAULT 0")
             }
         }
+        // 9 -> 10: server_config 新增 transport 连接配置（协议/多路复用/心跳/保活）
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `server_config` ADD COLUMN `protocol` TEXT NOT NULL DEFAULT 'tcp'")
+                db.execSQL("ALTER TABLE `server_config` ADD COLUMN `tcpMux` INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE `server_config` ADD COLUMN `heartbeatInterval` INTEGER NOT NULL DEFAULT 30")
+                db.execSQL("ALTER TABLE `server_config` ADD COLUMN `heartbeatTimeout` INTEGER NOT NULL DEFAULT 90")
+                db.execSQL("ALTER TABLE `server_config` ADD COLUMN `tcpMuxKeepaliveInterval` INTEGER NOT NULL DEFAULT 30")
+            }
+        }
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -58,7 +68,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "frp_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance

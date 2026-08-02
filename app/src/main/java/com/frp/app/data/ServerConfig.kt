@@ -15,7 +15,14 @@ data class ServerConfig(
     var serverAddr: String = "",
     var serverPort: Int = 7000,
     var token: String = "",
-    var updatedAt: Long = System.currentTimeMillis()
+    var updatedAt: Long = System.currentTimeMillis(),
+    
+    // 连接 frps 的 transport 配置（与 frpc 全局 transport 段对应）
+    var protocol: String = "tcp",            // tcp / kcp / quic / ws / wss
+    var tcpMux: Boolean = true,              // TCP 多路复用
+    var heartbeatInterval: Int = 30,         // 心跳间隔（秒）
+    var heartbeatTimeout: Int = 90,          // 心跳超时（秒）
+    var tcpMuxKeepaliveInterval: Int = 30    // TCP 多路复用保活间隔（秒）
 ) {
     fun isValid(): Boolean = serverAddr.isNotBlank() && serverPort in 1..65535
 }
