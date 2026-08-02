@@ -24,6 +24,10 @@ data class FrpConfig(
     val bindPort: Int = 0,
     val bindAddr: String = "127.0.0.1",
     
+    // 传输加密/压缩（需与对端 frpc 的 transport 配置一致；XTCP P2P 直连两端必须一致）
+    val useEncryption: Boolean = false,
+    val useCompression: Boolean = false,
+    
     // XTCP 回落配置
     val useFallback: Boolean = false,
     val fallbackTo: String = "",
