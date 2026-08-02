@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [FrpConfig::class, ServerConfig::class], version = 11, exportSchema = true)
+@Database(entities = [FrpConfig::class, ServerConfig::class], version = 12, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     
     abstract fun frpConfigDao(): FrpConfigDao
@@ -67,6 +67,12 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `frp_configs` ADD COLUMN `enabled` INTEGER NOT NULL DEFAULT 1")
             }
         }
+        // 11 -> 12: isActive 重命名为 running（明确"正在运行"语义，区别于 enabled 启用开关）
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `frp_configs` RENAME COLUMN `isActive` TO `running`")
+            }
+        }
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -74,7 +80,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "frp_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 // 不使用 fallbackToDestructiveMigration：迁移失败宁可崩溃也不清空用户数据
                 .build()
                 INSTANCE = instance

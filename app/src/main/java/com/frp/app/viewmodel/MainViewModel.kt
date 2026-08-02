@@ -23,7 +23,7 @@ data class ConfigGroup(
     val groupName: String,
     val primaryConfig: FrpConfig,
     val subConfigs: List<FrpConfig> = emptyList(),
-    val isActive: Boolean = false,
+    val running: Boolean = false,
     val enabled: Boolean = true
 )
 
@@ -64,7 +64,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (status != FrpStatus.RUNNING) {
                     _activeConfigId.value = null
                 } else {
-                    val activeConfig = repository.getActiveConfig()
+                    val activeConfig = repository.getRunningConfig()
                     _activeConfigId.value = activeConfig?.id
                 }
             }
@@ -89,7 +89,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 groupName = config.groupName,
                                 primaryConfig = primary,
                                 subConfigs = groupConfigs.filter { it.id != primary.id },
-                                isActive = groupConfigs.any { it.isActive },
+                                running = groupConfigs.any { it.running },
                                 enabled = groupConfigs.any { it.enabled }
                             )
                         )
@@ -104,7 +104,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             groupName = "",
                             primaryConfig = config,
                             subConfigs = emptyList(),
-                            isActive = config.isActive,
+                            running = config.running,
                             enabled = config.enabled
                         )
                     )
@@ -186,11 +186,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     fun setActiveConfig(configId: Long) {
         viewModelScope.launch {
-            val activeConfig = repository.getActiveConfig()
+            val activeConfig = repository.getRunningConfig()
             activeConfig?.let {
-                repository.updateActiveStatus(it.id, false)
+                repository.updateRunningStatus(it.id, false)
             }
-            repository.updateActiveStatus(configId, true)
+            repository.updateRunningStatus(configId, true)
             _activeConfigId.value = configId
         }
     }

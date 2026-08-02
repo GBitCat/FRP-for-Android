@@ -149,8 +149,8 @@ class FrpService : Service() {
                 }
                 
                 if (started) {
-                    database.frpConfigDao().updateAllActiveStatus(false)
-                    enabledConfigs.forEach { database.frpConfigDao().updateActiveStatus(it.id, true) }
+                    database.frpConfigDao().updateAllRunningStatus(false)
+                    enabledConfigs.forEach { database.frpConfigDao().updateRunningStatus(it.id, true) }
                     FrpStatusHolder.set(this@FrpService, FrpStatus.RUNNING)
                     activeConfigName = "${enabledConfigs.size} configs"
                     updateNotification("FRP is running: ${enabledConfigs.size} configs")
@@ -188,7 +188,7 @@ class FrpService : Service() {
                 FrpStatusHolder.set(this@FrpService, FrpStatus.STOPPED)
                 
                 val database = AppDatabase.getDatabase(this@FrpService)
-                database.frpConfigDao().updateAllActiveStatus(false)
+                database.frpConfigDao().updateAllRunningStatus(false)
                 logManager.addLog(LogLevel.INFO, TAG, "All configs deactivated")
                 
                 stopForeground(STOP_FOREGROUND_REMOVE)
