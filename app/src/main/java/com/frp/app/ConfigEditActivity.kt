@@ -94,6 +94,7 @@ fun ConfigEditScreen(
     var useCustomStcp by remember { mutableStateOf(false) }  // 是否自定义STCP配置
     var showGroupNameDialog by remember { mutableStateOf(false) }
     var pendingSaveConfig by remember { mutableStateOf<FrpConfig?>(null) }
+    var originalConfig by remember { mutableStateOf<FrpConfig?>(null) }
     var groupName by remember { mutableStateOf("") }
     
     // 加载现有配置
@@ -101,6 +102,7 @@ fun ConfigEditScreen(
         if (configId != null) {
             val config = viewModel.getConfigById(configId)
             if (config != null) {
+                originalConfig = config
                 name = config.name
                 localIp = config.localIp
                 localPort = config.localPort.toString()
@@ -184,7 +186,13 @@ fun ConfigEditScreen(
                                 stcpSecretKey = stcpSecretKey.ifBlank { secretKey },
                                 stcpServerName = stcpServerName.ifBlank { serverName.replace("xtcp", "stcp") },
                                 stcpBindPort = stcpBindPort.toIntOrNull() ?: -1,
-                                stcpBindAddr = stcpBindAddr
+                                stcpBindAddr = stcpBindAddr,
+                                groupId = originalConfig?.groupId ?: 0L,
+                                groupName = originalConfig?.groupName ?: "",
+                                isGroupPrimary = originalConfig?.isGroupPrimary ?: false,
+                                linkedConfigId = originalConfig?.linkedConfigId ?: 0L,
+                                isActive = originalConfig?.isActive ?: false,
+                                createdAt = originalConfig?.createdAt ?: System.currentTimeMillis()
                             )
                             
                             val error = configGenerator.validateConfig(config)
