@@ -26,9 +26,9 @@ class BootReceiver : BroadcastReceiver() {
                     val database = AppDatabase.getDatabase(context)
                     val activeConfig = database.frpConfigDao().getActiveConfig()
                     
-                    activeConfig?.let { config ->
-                        Log.d(TAG, "Found active config: ${config.name}, starting FRP")
-                        FrpService.startService(context, config.id)
+                    activeConfig?.let {
+                        Log.d(TAG, "Found active config, starting FRP with all enabled configs")
+                        FrpService.startService(context)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error checking active config", e)

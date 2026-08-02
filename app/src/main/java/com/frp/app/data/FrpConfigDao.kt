@@ -44,6 +44,19 @@ interface FrpConfigDao {
     @Query("UPDATE frp_configs SET isActive = :isActive WHERE groupId = :groupId")
     fun updateGroupActiveStatus(groupId: Long, isActive: Boolean)
     
+    @Query("UPDATE frp_configs SET isActive = :isActive")
+    fun updateAllActiveStatus(isActive: Boolean)
+    
+    // 启用开关
+    @Query("SELECT * FROM frp_configs WHERE enabled = 1 ORDER BY updatedAt DESC")
+    fun getEnabledConfigsSync(): List<FrpConfig>
+    
+    @Query("UPDATE frp_configs SET enabled = :enabled WHERE id = :id")
+    fun updateEnabled(id: Long, enabled: Boolean)
+    
+    @Query("UPDATE frp_configs SET enabled = :enabled WHERE groupId = :groupId")
+    fun updateGroupEnabled(groupId: Long, enabled: Boolean)
+    
     @Query("SELECT * FROM frp_configs WHERE isActive = 1 LIMIT 1")
     fun getActiveConfig(): FrpConfig?
 }

@@ -81,4 +81,28 @@ class FrpConfigRepository(
             frpConfigDao.getActiveConfig()
         }
     }
+    
+    suspend fun getEnabledConfigs(): List<FrpConfig> {
+        return withContext(Dispatchers.IO) {
+            frpConfigDao.getEnabledConfigsSync()
+        }
+    }
+    
+    suspend fun updateEnabled(id: Long, enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            frpConfigDao.updateEnabled(id, enabled)
+        }
+    }
+    
+    suspend fun updateGroupEnabled(groupId: Long, enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            frpConfigDao.updateGroupEnabled(groupId, enabled)
+        }
+    }
+    
+    suspend fun updateAllActiveStatus(isActive: Boolean) {
+        withContext(Dispatchers.IO) {
+            frpConfigDao.updateAllActiveStatus(isActive)
+        }
+    }
 }

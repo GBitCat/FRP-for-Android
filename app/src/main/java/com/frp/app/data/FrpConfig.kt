@@ -48,6 +48,9 @@ data class FrpConfig(
     
     val linkedConfigId: Long = 0,
     
+    // 启用开关：enabled 的配置会被拼接到统一 TOML，随服务端连接一起启动
+    val enabled: Boolean = true,
+    
     val isActive: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
