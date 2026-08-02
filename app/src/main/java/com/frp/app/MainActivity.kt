@@ -7,6 +7,7 @@ import androidx.compose.ui.window.PopupProperties
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.Debug
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import com.frp.app.data.ConfigImportExport
 import com.frp.app.data.FrpConfig
 import com.frp.app.data.FrpStatus
@@ -223,6 +225,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             
             Spacer(modifier = Modifier.height(12.dp))
             
+            // 内存占用卡片
+            MemoryCard()
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
             // 配置列表
             Text(
                 text = "Configurations (${configs.size})",
@@ -292,6 +299,88 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 }
+@Composable
+fun MemoryCard() {
+    // 应用自身内存占用：PSS（实际物理内存）+ Java 堆
+    var pssMb by remember { mutableStateOf(0f) }
+    var heapUsedMb by remember { mutableStateOf(0f) }
+    var heapMaxMb by remember { mutableStateOf(0f) }
+    
+    // 每 2 秒刷新一次
+    LaunchedEffect(Unit) {
+        while (true) {
+            val memInfo = Debug.MemoryInfo()
+            Debug.getMemoryInfo(memInfo)
+            pssMb = memInfo.getTotalPss() / 1024f
+            val runtime = Runtime.getRuntime()
+            heapUsedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024f * 1024f)
+            heapMaxMb = runtime.maxMemory() / (1024f * 1024f)
+            delay(2000)
+        }
+    }
+    
+    val heapPercent = if (heapMaxMb > 0) heapUsedMb / heapMaxMb else 0f
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 8.dp)
+            ) {
+                Icon(
+                    Icons.Default.Memory,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "App Memory",
+                    style = MaterialTheme.typography.titleSmall
+                )
+            }
+            
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.padding(bottom = 4.dp)
+            ) {
+                Text(
+                    text = "${pssMb.toInt()} MB",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "PSS",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+            }
+            
+            LinearProgressIndicator(
+                progress = heapPercent,
+                modifier = Modifier.fillMaxWidth()
+            )
+            
+            Spacer(modifier = Modifier.height(6.dp))
+            
+            Text(
+                text = "Heap: ${String.format("%.1f", heapUsedMb)} / ${String.format("%.1f", heapMaxMb)} MB (${(heapPercent * 100).toInt()}%)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @Composable
 fun IpAddressCard() {
     val context = LocalContext.current
