@@ -133,12 +133,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return repository.getConfigById(id)
     }
     
-    fun addConfig(config: FrpConfig): Long {
-        var configId = 0L
+    fun addConfig(config: FrpConfig) {
         viewModelScope.launch {
-            configId = repository.insertConfig(config)
+            repository.insertConfig(config)
         }
-        return configId
+    }
+    
+    // 顺序插入多个配置（保证分组主/子配置插入顺序稳定）
+    fun addConfigs(configs: List<FrpConfig>) {
+        viewModelScope.launch {
+            configs.forEach { repository.insertConfig(it) }
+        }
     }
     
     fun updateConfig(config: FrpConfig) {
