@@ -20,7 +20,6 @@ class ConfigGenerator(private val context: Context) {
             "106.12.251.31" to 3478,
             "77.72.169.210" to 3478,
         )
-    }
 
     fun generateProxyConfig(config: FrpConfig): String {
         return buildString {
@@ -159,6 +158,7 @@ class ConfigGenerator(private val context: Context) {
                 append(generateProxyConfig(config))
             }
         }
+    }
     }
 
     fun createLinkedStcpConfig(xtcpConfig: FrpConfig): FrpConfig {

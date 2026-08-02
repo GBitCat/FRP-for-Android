@@ -265,7 +265,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             // 分组配置：开关控制启用，随服务端连接一起启动
                             ConfigGroupItem(
                                 group = group,
-                                isActive = group.isActive,
+                                running = group.running,
                                 enabled = group.enabled,
                                 onEnabledChange = { enabled -> viewModel.setGroupEnabled(group.groupId, enabled) },
                                 onEdit = {
@@ -281,7 +281,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             val config = group.primaryConfig
                             ConfigItem(
                                 config = config,
-                                isActive = config.id == activeConfigId,
+                                running = config.id == activeConfigId,
                                 enabled = config.enabled,
                                 onEnabledChange = { enabled -> viewModel.setConfigEnabled(config.id, enabled) },
                                 onEdit = {
@@ -867,7 +867,7 @@ fun <T> TransportDropdown(
 @Composable
 fun ConfigItem(
     config: FrpConfig,
-    isActive: Boolean,
+    running: Boolean,
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
     onEdit: () -> Unit,
@@ -912,7 +912,7 @@ fun ConfigItem(
                     onLongClick = { showContextMenu = true }
                 ),
             colors = CardDefaults.cardColors(
-                containerColor = if (isActive) {
+                containerColor = if (running) {
                     MaterialTheme.colorScheme.secondaryContainer
                 } else {
                     MaterialTheme.colorScheme.surface
@@ -1005,7 +1005,7 @@ fun ConfigItem(
 @Composable
 fun ConfigGroupItem(
     group: ConfigGroup,
-    isActive: Boolean,
+    running: Boolean,
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
     onEdit: () -> Unit,
@@ -1020,7 +1020,7 @@ fun ConfigGroupItem(
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isActive) {
+            containerColor = if (running) {
                 MaterialTheme.colorScheme.secondaryContainer
             } else {
                 MaterialTheme.colorScheme.surface

@@ -64,21 +64,21 @@ class FrpConfigRepository(
         }
     }
     
-    suspend fun updateActiveStatus(id: Long, isActive: Boolean) {
+    suspend fun updateRunningStatus(id: Long, running: Boolean) {
         withContext(Dispatchers.IO) {
-            frpConfigDao.updateActiveStatus(id, isActive)
+            frpConfigDao.updateRunningStatus(id, running)
         }
     }
     
-    suspend fun updateGroupActiveStatus(groupId: Long, isActive: Boolean) {
+    suspend fun updateGroupRunningStatus(groupId: Long, running: Boolean) {
         withContext(Dispatchers.IO) {
-            frpConfigDao.updateGroupActiveStatus(groupId, isActive)
+            frpConfigDao.updateGroupRunningStatus(groupId, running)
         }
     }
     
-    suspend fun getActiveConfig(): FrpConfig? {
+    suspend fun getRunningConfig(): FrpConfig? {
         return withContext(Dispatchers.IO) {
-            frpConfigDao.getActiveConfig()
+            frpConfigDao.getRunningConfig()
         }
     }
     
@@ -100,9 +100,9 @@ class FrpConfigRepository(
         }
     }
     
-    suspend fun updateAllActiveStatus(isActive: Boolean) {
+    suspend fun updateAllRunningStatus(running: Boolean) {
         withContext(Dispatchers.IO) {
-            frpConfigDao.updateAllActiveStatus(isActive)
+            frpConfigDao.updateAllRunningStatus(running)
         }
     }
 }

@@ -24,7 +24,7 @@ class BootReceiver : BroadcastReceiver() {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val database = AppDatabase.getDatabase(context)
-                    val activeConfig = database.frpConfigDao().getActiveConfig()
+                    val activeConfig = database.frpConfigDao().getRunningConfig()
                     
                     activeConfig?.let {
                         Log.d(TAG, "Found active config, starting FRP with all enabled configs")

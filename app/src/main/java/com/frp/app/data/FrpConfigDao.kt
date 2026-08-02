@@ -38,14 +38,14 @@ interface FrpConfigDao {
     @Query("DELETE FROM frp_configs WHERE groupId = :groupId")
     fun deleteGroup(groupId: Long)
     
-    @Query("UPDATE frp_configs SET isActive = :isActive WHERE id = :id")
-    fun updateActiveStatus(id: Long, isActive: Boolean)
+    @Query("UPDATE frp_configs SET running = :running WHERE id = :id")
+    fun updateRunningStatus(id: Long, running: Boolean)
     
-    @Query("UPDATE frp_configs SET isActive = :isActive WHERE groupId = :groupId")
-    fun updateGroupActiveStatus(groupId: Long, isActive: Boolean)
+    @Query("UPDATE frp_configs SET running = :running WHERE groupId = :groupId")
+    fun updateGroupRunningStatus(groupId: Long, running: Boolean)
     
-    @Query("UPDATE frp_configs SET isActive = :isActive")
-    fun updateAllActiveStatus(isActive: Boolean)
+    @Query("UPDATE frp_configs SET running = :running")
+    fun updateAllRunningStatus(running: Boolean)
     
     // 启用开关
     @Query("SELECT * FROM frp_configs WHERE enabled = 1 ORDER BY updatedAt DESC")
@@ -57,6 +57,6 @@ interface FrpConfigDao {
     @Query("UPDATE frp_configs SET enabled = :enabled WHERE groupId = :groupId")
     fun updateGroupEnabled(groupId: Long, enabled: Boolean)
     
-    @Query("SELECT * FROM frp_configs WHERE isActive = 1 LIMIT 1")
-    fun getActiveConfig(): FrpConfig?
+    @Query("SELECT * FROM frp_configs WHERE running = 1 LIMIT 1")
+    fun getRunningConfig(): FrpConfig?
 }

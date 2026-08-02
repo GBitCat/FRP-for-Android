@@ -160,7 +160,9 @@ fun ConfigEditScreen(
                 actions = {
                     TextButton(
                         onClick = {
-                            val config = FrpConfig(
+                            // 基于原配置 copy：编辑时自动保留分组/启用/运行状态/时间戳等字段，
+                            // 避免手工构造遗漏（历史 bug：分组字段被清零）
+                            val config = (originalConfig ?: FrpConfig(name = name, localPort = 0)).copy(
                                 id = configId ?: 0,
                                 name = name,
                                 localIp = localIp,
@@ -178,22 +180,13 @@ fun ConfigEditScreen(
                                 fallbackTo = if (useFallback) {
                                     if (useCustomStcp) stcpName.ifBlank { autoStcpName } else autoStcpName
                                 } else "",
-                                
-                                
                                 fallbackTimeoutMs = fallbackTimeoutMs.toIntOrNull() ?: 3000,
                                 useCustomStcp = useCustomStcp,
                                 stcpName = stcpName.ifBlank { autoStcpName },
                                 stcpSecretKey = stcpSecretKey.ifBlank { secretKey },
                                 stcpServerName = stcpServerName.ifBlank { serverName.replace("xtcp", "stcp") },
                                 stcpBindPort = stcpBindPort.toIntOrNull() ?: -1,
-                                stcpBindAddr = stcpBindAddr,
-                                groupId = originalConfig?.groupId ?: 0L,
-                                groupName = originalConfig?.groupName ?: "",
-                                isGroupPrimary = originalConfig?.isGroupPrimary ?: false,
-                                linkedConfigId = originalConfig?.linkedConfigId ?: 0L,
-                                enabled = originalConfig?.enabled ?: true,
-                                isActive = originalConfig?.isActive ?: false,
-                                createdAt = originalConfig?.createdAt ?: System.currentTimeMillis()
+                                stcpBindAddr = stcpBindAddr
                             )
                             
                             val error = configGenerator.validateConfig(config)
@@ -778,7 +771,7 @@ fun ConfigEditScreen(
                                 stcpBindAddr = stcpBindAddr
                     )
                     
-                    val previewText = configGenerator.generateFullConfig(
+                    val previewText = ConfigGenerator.generateFullConfig(
                         serverConfig ?: ServerConfig(serverAddr = "frp.example.com"),
                         previewXtcpConfig,
                         previewStcpConfig
