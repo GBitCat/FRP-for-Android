@@ -201,6 +201,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 modifier = Modifier.padding(16.dp)
             )
             
+            var showLicensesDialog by remember { mutableStateOf(false) }
+            
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -221,22 +223,51 @@ fun SettingsScreen(onBack: () -> Unit) {
                         title = "Open source licenses",
                         subtitle = "View third-party licenses",
                         icon = Icons.Default.Description,
-                        onClick = { /* TODO: Show licenses */ }
+                        onClick = { showLicensesDialog = true }
                     )
                     
                     Divider(modifier = Modifier.padding(horizontal = 16.dp))
                     
-                    // GitHub
+                    // GitHub（frp 官方项目）
                     SettingsClickableItem(
                         title = "GitHub",
-                        subtitle = "View source code on GitHub",
+                        subtitle = "frp project on GitHub",
                         icon = Icons.Default.Code,
-                        onClick = { /* TODO: Open GitHub */ }
+                        onClick = {
+                            val intent = Intent(
+                                Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://github.com/fatedier/frp")
+                            )
+                            context.startActivity(intent)
+                        }
                     )
                 }
             }
             
             Spacer(modifier = Modifier.height(32.dp))
+            
+            // 开源许可对话框
+            if (showLicensesDialog) {
+                AlertDialog(
+                    onDismissRequest = { showLicensesDialog = false },
+                    title = { Text("Open Source Licenses") },
+                    text = {
+                        Column(
+                            modifier = Modifier.verticalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                text = "Kotlin - Apache 2.0\nAndroidX / Jetpack - Apache 2.0\nJetpack Compose - Apache 2.0\nRoom - Apache 2.0\nGson - Apache 2.0\nfrp (fatedier) - Apache 2.0\nMaterial Icons - Apache 2.0",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showLicensesDialog = false }) {
+                            Text("OK")
+                        }
+                    }
+                )
+            }
             
             // 底部文字
             Text(

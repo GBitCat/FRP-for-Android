@@ -98,20 +98,33 @@ class ConfigImportExport(private val context: Context) {
                 val trimmed = line.trim()
                 if (trimmed.startsWith("#") || trimmed.isEmpty()) continue
                 
+                // TOML 值去引号（"value" 或 'value'）
+                fun unquote(v: String): String = v.trim().removeSurrounding("\"").removeSurrounding("'")
+                
                 when {
                     trimmed.startsWith("[") && trimmed.endsWith("]") -> {
                         currentSection = trimmed.substring(1, trimmed.length - 1)
                     }
+                    // TOML 顶层键：serverAddr / serverPort / auth.token
+                    currentSection.isEmpty() && trimmed.startsWith("serverAddr") -> {
+                        serverAddr = unquote(trimmed.substringAfter("="))
+                    }
+                    currentSection.isEmpty() && trimmed.startsWith("serverPort") -> {
+                        serverPort = unquote(trimmed.substringAfter("=")).toIntOrNull() ?: 7000
+                    }
+                    currentSection.isEmpty() && trimmed.startsWith("auth.token") -> {
+                        token = unquote(trimmed.substringAfter("="))
+                    }
                     currentSection == "common" -> {
                         when {
                             trimmed.startsWith("server_addr") -> {
-                                serverAddr = trimmed.split("=").getOrNull(1)?.trim() ?: ""
+                                serverAddr = unquote(trimmed.split("=").getOrNull(1) ?: "")
                             }
                             trimmed.startsWith("server_port") -> {
-                                serverPort = trimmed.split("=").getOrNull(1)?.trim()?.toIntOrNull() ?: 7000
+                                serverPort = unquote(trimmed.split("=").getOrNull(1) ?: "").toIntOrNull() ?: 7000
                             }
                             trimmed.startsWith("token") -> {
-                                token = trimmed.split("=").getOrNull(1)?.trim()
+                                token = unquote(trimmed.split("=").getOrNull(1) ?: "")
                             }
                         }
                     }
@@ -119,16 +132,16 @@ class ConfigImportExport(private val context: Context) {
                         name = currentSection
                         when {
                             trimmed.startsWith("type") -> {
-                                protocol = trimmed.split("=").getOrNull(1)?.trim() ?: "tcp"
+                                protocol = unquote(trimmed.split("=").getOrNull(1) ?: "") ?: "tcp"
                             }
                             trimmed.startsWith("local_ip") -> {
-                                localIp = trimmed.split("=").getOrNull(1)?.trim() ?: "127.0.0.1"
+                                localIp = unquote(trimmed.split("=").getOrNull(1) ?: "") ?: "127.0.0.1"
                             }
                             trimmed.startsWith("local_port") -> {
-                                localPort = trimmed.split("=").getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+                                localPort = unquote(trimmed.split("=").getOrNull(1) ?: "").toIntOrNull() ?: 0
                             }
                             trimmed.startsWith("remote_port") -> {
-                                remotePort = trimmed.split("=").getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+                                remotePort = unquote(trimmed.split("=").getOrNull(1) ?: "").toIntOrNull() ?: 0
                             }
                         }
                     }
