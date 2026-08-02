@@ -212,6 +212,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 connectionStatus = connectionStatus,
                 activeConfig = configs.find { it.id == activeConfigId },
                 onSave = { viewModel.saveServerConfig(it) },
+                onStart = { viewModel.startAll() },
                 onStop = { viewModel.stopFrp() }
             )
             
@@ -254,12 +255,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 LazyColumn {
                     items(configGroups) { group ->
                         if (group.groupId > 0) {
-                            // 分组配置
+                            // 分组配置：开关控制启用，随服务端连接一起启动
                             ConfigGroupItem(
                                 group = group,
                                 isActive = group.isActive,
-                                onStart = { viewModel.startGroup(group.groupId) },
-                                onStop = { viewModel.stopFrp() },
+                                enabled = group.enabled,
+                                onEnabledChange = { enabled -> viewModel.setGroupEnabled(group.groupId, enabled) },
                                 onEdit = {
                                     val intent = Intent(context, ConfigEditActivity::class.java).apply {
                                         putExtra("config_id", group.primaryConfig.id)
@@ -274,8 +275,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             ConfigItem(
                                 config = config,
                                 isActive = config.id == activeConfigId,
-                                onStart = { viewModel.startFrp(config.id) },
-                                onStop = { viewModel.stopFrp() },
+                                enabled = config.enabled,
+                                onEnabledChange = { enabled -> viewModel.setConfigEnabled(config.id, enabled) },
                                 onEdit = {
                                     val intent = Intent(context, ConfigEditActivity::class.java).apply {
                                         putExtra("config_id", config.id)
@@ -384,6 +385,7 @@ fun ServerCard(
     connectionStatus: ConnectionStatus,
     activeConfig: FrpConfig?,
     onSave: (ServerConfig) -> Unit,
+    onStart: () -> Unit,
     onStop: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -553,9 +555,18 @@ fun ServerCard(
                         Text("Stop FRP")
                     }
                 } else {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = onStart,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "Start")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Start FRP (all enabled)")
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Long press to edit",
+                        text = "Long press to edit server",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
@@ -768,8 +779,8 @@ fun <T> TransportDropdown(
 fun ConfigItem(
     config: FrpConfig,
     isActive: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -844,26 +855,11 @@ fun ConfigItem(
                     )
                 }
                 
-                Row {
-                    if (isActive) {
-                        IconButton(onClick = onStop) {
-                            Icon(
-                                Icons.Default.Stop,
-                                contentDescription = "Stop",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    } else {
-                        IconButton(onClick = onStart) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = "Start",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    
-
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = onEnabledChange
+                    )
                 }
             }
             }
@@ -921,8 +917,8 @@ fun ConfigItem(
 fun ConfigGroupItem(
     group: ConfigGroup,
     isActive: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -980,27 +976,12 @@ fun ConfigGroupItem(
                     )
                 }
                 
-                // 操作按钮
-                Row {
-                    if (isActive) {
-                        IconButton(onClick = onStop) {
-                            Icon(
-                                Icons.Default.Stop,
-                                contentDescription = "Stop",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    } else {
-                        IconButton(onClick = onStart) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = "Start",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    
-
+                // 启用开关：随服务端连接一起启动
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = onEnabledChange
+                    )
                 }
             }
             

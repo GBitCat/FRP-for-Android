@@ -87,10 +87,11 @@ class ConfigGenerator(private val context: Context) {
      * [serverAddrOriginal] 为原始 serverAddr 域名（用于在生成文件中加注释，便于调试）。
      * 此方法本身不做网络调用，可在 UI 线程安全使用（编辑页预览）。
      */
-    fun generateFullConfig(
+    /**
+     * 全局服务器连接配置段（serverAddr / token / STUN / transport）。
+     */
+    private fun generateGlobalConfig(
         server: ServerConfig,
-        config: FrpConfig,
-        linkedConfig: FrpConfig? = null,
         stunServer: String = DEFAULT_STUN_SERVER,
         serverAddrOriginal: String? = null
     ): String {
@@ -113,7 +114,21 @@ class ConfigGenerator(private val context: Context) {
             appendLine("transport.heartbeatTimeout = ${server.heartbeatTimeout}")
             appendLine("transport.tcpMuxKeepaliveInterval = ${server.tcpMuxKeepaliveInterval}")
             appendLine()
+        }
+    }
 
+    /**
+     * 生成单个配置的完整 frpc 配置（编辑页预览用）。
+     */
+    fun generateFullConfig(
+        server: ServerConfig,
+        config: FrpConfig,
+        linkedConfig: FrpConfig? = null,
+        stunServer: String = DEFAULT_STUN_SERVER,
+        serverAddrOriginal: String? = null
+    ): String {
+        return buildString {
+            append(generateGlobalConfig(server, stunServer, serverAddrOriginal))
             if (linkedConfig != null) {
                 appendLine("# Fallback STCP visitor")
                 append(generateProxyConfig(linkedConfig))
@@ -121,6 +136,26 @@ class ConfigGenerator(private val context: Context) {
                 appendLine("# Primary XTCP visitor")
                 append(generateProxyConfig(config))
             } else {
+                append(generateProxyConfig(config))
+            }
+        }
+    }
+
+    /**
+     * 拼接所有已启用配置生成统一 frpc TOML：
+     * 一次启动服务端连接即可加载全部应用配置。
+     */
+    fun generateAllConfig(
+        server: ServerConfig,
+        configs: List<FrpConfig>,
+        stunServer: String = DEFAULT_STUN_SERVER,
+        serverAddrOriginal: String? = null
+    ): String {
+        return buildString {
+            append(generateGlobalConfig(server, stunServer, serverAddrOriginal))
+            configs.forEachIndexed { index, config ->
+                if (index > 0) appendLine()
+                appendLine("# Config: ${config.name} (${config.protocol})")
                 append(generateProxyConfig(config))
             }
         }
@@ -157,6 +192,22 @@ class ConfigGenerator(private val context: Context) {
             serverAddrOriginal = server.serverAddr
         )
         val configFile = context.getFileStreamPath("frpc_${config.id}.toml")
+        configFile.writeText(configContent)
+        return configFile
+    }
+
+    /**
+     * 保存拼接了全部已启用配置的统一 TOML（frpc_all.toml），
+     * 一次启动即可使用所有应用配置。
+     */
+    fun saveAllConfigFile(server: ServerConfig, configs: List<FrpConfig>): File {
+        val resolved = resolveConnection(server)
+        val configContent = generateAllConfig(
+            resolved.first, configs,
+            stunServer = resolved.second,
+            serverAddrOriginal = server.serverAddr
+        )
+        val configFile = context.getFileStreamPath("frpc_all.toml")
         configFile.writeText(configContent)
         return configFile
     }

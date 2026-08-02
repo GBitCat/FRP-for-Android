@@ -23,7 +23,8 @@ data class ConfigGroup(
     val groupName: String,
     val primaryConfig: FrpConfig,
     val subConfigs: List<FrpConfig> = emptyList(),
-    val isActive: Boolean = false
+    val isActive: Boolean = false,
+    val enabled: Boolean = true
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -88,7 +89,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 groupName = config.groupName,
                                 primaryConfig = primary,
                                 subConfigs = groupConfigs.filter { it.id != primary.id },
-                                isActive = groupConfigs.any { it.isActive }
+                                isActive = groupConfigs.any { it.isActive },
+                                enabled = groupConfigs.any { it.enabled }
                             )
                         )
                     }
@@ -102,7 +104,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             groupName = "",
                             primaryConfig = config,
                             subConfigs = emptyList(),
-                            isActive = config.isActive
+                            isActive = config.isActive,
+                            enabled = config.enabled
                         )
                     )
                 }
@@ -112,17 +115,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     
-    fun startFrp(configId: Long) {
-        FrpService.startService(getApplication(), configId)
-        _activeConfigId.value = configId
-    }
-    
-    fun startGroup(groupId: Long) {
+    // 全局启动：拼接所有已启用配置，一次启动全部使用
+    fun startAll() {
+        FrpService.startService(getApplication())
         viewModelScope.launch {
-            val groupConfigs = repository.getConfigsByGroupId(groupId)
-            // 启动主配置（XTCP）
-            val primary = groupConfigs.find { it.isGroupPrimary } ?: groupConfigs.first()
-            startFrp(primary.id)
+            val configs = repository.getEnabledConfigs()
+            _activeConfigId.value = configs.firstOrNull()?.id
         }
     }
     
@@ -164,6 +162,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveServerConfig(config: ServerConfig) {
         viewModelScope.launch {
             repository.saveServerConfig(config)
+        }
+    }
+    
+    // 分组启用开关：切换组内全部配置
+    fun setGroupEnabled(groupId: Long, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateGroupEnabled(groupId, enabled)
+        }
+    }
+    
+    // 单个配置启用开关
+    fun setConfigEnabled(configId: Long, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateEnabled(configId, enabled)
         }
     }
     

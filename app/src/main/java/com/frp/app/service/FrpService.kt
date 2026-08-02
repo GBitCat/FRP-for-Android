@@ -40,10 +40,9 @@ class FrpService : Service() {
         
         val logManager = LogManager()
         
-        fun startService(context: Context, configId: Long) {
+        fun startService(context: Context) {
             val intent = Intent(context, FrpService::class.java).apply {
                 action = ACTION_START
-                putExtra(EXTRA_CONFIG_ID, configId)
             }
             context.startForegroundService(intent)
         }
@@ -73,13 +72,7 @@ class FrpService : Service() {
         
         when (intent?.action) {
             ACTION_START -> {
-                val configId = intent.getLongExtra(EXTRA_CONFIG_ID, -1)
-                if (configId != -1L) {
-                    startFrp(configId)
-                } else {
-                    logManager.addLog(LogLevel.INFO, TAG, "No linked config found")
-                    stopSelf()
-                }
+                startFrp()
             }
             ACTION_STOP -> {
                 stopFrp()
@@ -95,24 +88,24 @@ class FrpService : Service() {
         return null
     }
     
-    private fun startFrp(configId: Long) {
+    private fun startFrp() {
         serviceScope.launch {
             try {
-                logManager.addLog(LogLevel.INFO, TAG, "Starting FRP with config ID: $configId")
+                logManager.addLog(LogLevel.INFO, TAG, "Starting FRP with all enabled configs")
                 
                 val database = AppDatabase.getDatabase(this@FrpService)
-                val config = database.frpConfigDao().getConfigById(configId)
+                val enabledConfigs = database.frpConfigDao().getEnabledConfigsSync()
                 
-                if (config == null) {
-                    logManager.addLog(LogLevel.ERROR, TAG, "Config not found: $configId")
+                if (enabledConfigs.isEmpty()) {
+                    logManager.addLog(LogLevel.ERROR, TAG, "No enabled config found. Please enable at least one config.")
                     FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
-                    updateNotification("Error: Config not found")
+                    updateNotification("Error: No enabled config")
                     delay(2000)
                     stopSelf()
                     return@launch
                 }
                 
-                logManager.addLog(LogLevel.INFO, TAG, "Config loaded: ${config.name}")
+                logManager.addLog(LogLevel.INFO, TAG, "Enabled configs: ${enabledConfigs.map { it.name }}")
                 
                 // 加载全局服务器连接配置
                 val server = database.serverConfigDao().getServerConfigSync()
@@ -126,17 +119,7 @@ class FrpService : Service() {
                 }
                 logManager.addLog(LogLevel.INFO, TAG, "Server: ${server.serverAddr}:${server.serverPort}")
                 
-                logManager.addLog(LogLevel.INFO, TAG, "Config useFallback: ${config.useFallback}, fallbackTo: ${config.fallbackTo}")
-                val linkedConfig = if (config.useFallback && config.fallbackTo.isNotBlank()) {
-                    val allConfigs = database.frpConfigDao().getAllConfigsSync()
-                    val found = allConfigs.find { it.name == config.fallbackTo && it.protocol == "stcp" }
-                    logManager.addLog(LogLevel.INFO, TAG, "Linked config found: ${found?.name ?: "none"}")
-                    found
-                } else {
-                    logManager.addLog(LogLevel.INFO, TAG, "No linked config needed")
-                    null
-                }
-                val configFile = configGenerator.saveConfigFile(server, config, linkedConfig)
+                val configFile = configGenerator.saveAllConfigFile(server, enabledConfigs)
                 logManager.addLog(LogLevel.INFO, TAG, "Config file saved: ${configFile.absolutePath}")
                 
                 frpManager.stopFrpc()  // 先停止现有进程
@@ -153,7 +136,7 @@ class FrpService : Service() {
                     }
                 }
                 
-                updateNotification("Connecting to ${config.name}...")
+                updateNotification("Connecting to ${enabledConfigs.size} configs...")
                 
                 logManager.addLog(LogLevel.INFO, TAG, "Starting frpc process...")
                 val started = frpManager.startFrpc(configFile.absolutePath, { logLine ->
@@ -166,10 +149,11 @@ class FrpService : Service() {
                 }
                 
                 if (started) {
-                    database.frpConfigDao().updateActiveStatus(configId, true)
+                    database.frpConfigDao().updateAllActiveStatus(false)
+                    enabledConfigs.forEach { database.frpConfigDao().updateActiveStatus(it.id, true) }
                     FrpStatusHolder.set(this@FrpService, FrpStatus.RUNNING)
-                    activeConfigName = config.name
-                    updateNotification("FRP is running: ${config.name}")
+                    activeConfigName = "${enabledConfigs.size} configs"
+                    updateNotification("FRP is running: ${enabledConfigs.size} configs")
                     startConnectionStatusMonitor()
                     logManager.addLog(LogLevel.INFO, TAG, "FRP started successfully")
                 } else {
@@ -204,11 +188,8 @@ class FrpService : Service() {
                 FrpStatusHolder.set(this@FrpService, FrpStatus.STOPPED)
                 
                 val database = AppDatabase.getDatabase(this@FrpService)
-                val activeConfig = database.frpConfigDao().getActiveConfig()
-                activeConfig?.let {
-                    database.frpConfigDao().updateActiveStatus(it.id, false)
-                    logManager.addLog(LogLevel.INFO, TAG, "Config '${it.name}' deactivated")
-                }
+                database.frpConfigDao().updateAllActiveStatus(false)
+                logManager.addLog(LogLevel.INFO, TAG, "All configs deactivated")
                 
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()

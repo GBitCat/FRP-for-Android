@@ -191,6 +191,7 @@ fun ConfigEditScreen(
                                 groupName = originalConfig?.groupName ?: "",
                                 isGroupPrimary = originalConfig?.isGroupPrimary ?: false,
                                 linkedConfigId = originalConfig?.linkedConfigId ?: 0L,
+                                enabled = originalConfig?.enabled ?: true,
                                 isActive = originalConfig?.isActive ?: false,
                                 createdAt = originalConfig?.createdAt ?: System.currentTimeMillis()
                             )
