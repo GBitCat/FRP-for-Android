@@ -76,6 +76,10 @@ fun ConfigEditScreen(
     var bindAddr by remember { mutableStateOf("127.0.0.1") }
     var showSecretKey by remember { mutableStateOf(false) }
     
+    // 传输加密/压缩（需与对端 frpc 配置一致）
+    var useEncryption by remember { mutableStateOf(false) }
+    var useCompression by remember { mutableStateOf(false) }
+    
     // XTCP 回落配置
     var useFallback by remember { mutableStateOf(false) }
     var fallbackTimeoutMs by remember { mutableStateOf("3000") }
@@ -107,6 +111,8 @@ fun ConfigEditScreen(
                 serverName = config.serverName ?: ""
                 bindPort = config.bindPort.toString()
                 bindAddr = config.bindAddr
+                useEncryption = config.useEncryption
+                useCompression = config.useCompression
                 android.util.Log.d("ConfigEdit", "Loading - useFallback: ${config.useFallback}, fallbackTo: ${config.fallbackTo}")
                 useFallback = config.useFallback
                 useCustomStcp = config.useCustomStcp
@@ -164,6 +170,8 @@ fun ConfigEditScreen(
                                 serverName = serverName.ifBlank { null },
                                 bindPort = bindPort.toIntOrNull() ?: 0,
                                 bindAddr = bindAddr,
+                                useEncryption = useEncryption,
+                                useCompression = useCompression,
                                 useFallback = useFallback,
                                 fallbackTo = if (useFallback) {
                                     if (useCustomStcp) stcpName.ifBlank { autoStcpName } else autoStcpName
@@ -363,6 +371,45 @@ fun ConfigEditScreen(
                                 }
                             }
                         )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Divider()
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Text(
+                            text = "Transport Encryption / Compression",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        Text(
+                            text = "Must match the peer frpc transport settings (XTCP P2P requires both ends identical)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Encryption", style = MaterialTheme.typography.bodyMedium)
+                            Switch(
+                                checked = useEncryption,
+                                onCheckedChange = { useEncryption = it }
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Compression", style = MaterialTheme.typography.bodyMedium)
+                            Switch(
+                                checked = useCompression,
+                                onCheckedChange = { useCompression = it }
+                            )
+                        }
                         
                         Spacer(modifier = Modifier.height(12.dp))
                         
@@ -676,7 +723,9 @@ fun ConfigEditScreen(
                                 serverName = stcpServerName.ifBlank { serverName },
                                 bindPort = stcpBindPort.toIntOrNull() ?: -1,
                                 localPort = 0,
-                                bindAddr = stcpBindAddr
+                                bindAddr = stcpBindAddr,
+                                useEncryption = useEncryption,
+                                useCompression = useCompression
                             )
                         } else {
                             val xtcpPreview = FrpConfig(
@@ -687,7 +736,9 @@ fun ConfigEditScreen(
                                 serverName = serverName.ifBlank { null },
                                 bindPort = bindPort.toIntOrNull() ?: 9002,
                                 localPort = 0,
-                                bindAddr = bindAddr
+                                bindAddr = bindAddr,
+                                useEncryption = useEncryption,
+                                useCompression = useCompression
                             )
                             configGenerator.createLinkedStcpConfig(xtcpPreview)
                         }
@@ -704,6 +755,8 @@ fun ConfigEditScreen(
                         serverName = serverName.ifBlank { null },
                         bindPort = bindPort.toIntOrNull() ?: 0,
                         bindAddr = bindAddr,
+                        useEncryption = useEncryption,
+                        useCompression = useCompression,
                         useFallback = useFallback,
                         fallbackTo = if (useCustomStcp) stcpName.ifBlank { autoStcpName } else autoStcpName,
                         
@@ -769,6 +822,8 @@ fun ConfigEditScreen(
                                 bindPort = stcpBindPort.toIntOrNull() ?: -1,
                                 localPort = 0,
                                 bindAddr = stcpBindAddr,
+                                useEncryption = useEncryption,
+                                useCompression = useCompression,
                                 groupId = groupId,
                                 groupName = finalGroupName,
                                 isGroupPrimary = false

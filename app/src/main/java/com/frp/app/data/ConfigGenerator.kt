@@ -69,6 +69,14 @@ class ConfigGenerator(private val context: Context) {
                     }
                 }
             }
+
+            // 传输加密/压缩：TOML 子表必须紧跟所属 [[visitors]]/[[proxies]] 块
+            if (config.useEncryption || config.useCompression) {
+                appendLine()
+                appendLine(if (config.isVisitor()) "[visitors.transport]" else "[proxies.transport]")
+                appendLine("useEncryption = ${config.useEncryption}")
+                appendLine("useCompression = ${config.useCompression}")
+            }
         }
     }
 
@@ -122,7 +130,9 @@ class ConfigGenerator(private val context: Context) {
             secretKey = xtcpConfig.secretKey,
             serverName = xtcpConfig.stcpServerName.ifBlank { xtcpConfig.serverName?.replace("xtcp", "stcp") ?: "" },
             bindPort = -1,
-            bindAddr = ""
+            bindAddr = "",
+            useEncryption = xtcpConfig.useEncryption,
+            useCompression = xtcpConfig.useCompression
         )
     }
 

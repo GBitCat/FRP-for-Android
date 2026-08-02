@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [FrpConfig::class, ServerConfig::class], version = 8, exportSchema = false)
+@Database(entities = [FrpConfig::class, ServerConfig::class], version = 9, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     
     abstract fun frpConfigDao(): FrpConfigDao
@@ -44,6 +44,13 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
         }
+        // 8 -> 9: frp_configs 新增 useEncryption/useCompression 传输加密压缩开关
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `frp_configs` ADD COLUMN `useEncryption` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `frp_configs` ADD COLUMN `useCompression` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -51,7 +58,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "frp_database"
                 )
-                .addMigrations(MIGRATION_7_8)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9)
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance
