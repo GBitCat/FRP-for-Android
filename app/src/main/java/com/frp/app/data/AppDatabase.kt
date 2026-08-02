@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [FrpConfig::class, ServerConfig::class], version = 11, exportSchema = false)
+@Database(entities = [FrpConfig::class, ServerConfig::class], version = 11, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     
     abstract fun frpConfigDao(): FrpConfigDao
@@ -75,7 +75,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "frp_database"
                 )
                 .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
-                .fallbackToDestructiveMigration()
+                // 不使用 fallbackToDestructiveMigration：迁移失败宁可崩溃也不清空用户数据
                 .build()
                 INSTANCE = instance
                 instance

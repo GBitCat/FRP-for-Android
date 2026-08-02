@@ -852,9 +852,8 @@ fun ConfigEditScreen(
                             isGroupPrimary = true
                         )
                         
-                        // 保存配置
-                        viewModel.addConfig(stcpConfig)
-                        viewModel.addConfig(xtcpConfig)
+                        // 保存配置（顺序插入，保证组内顺序）
+                        viewModel.addConfigs(listOf(stcpConfig, xtcpConfig))
                         
                         Toast.makeText(context, "Created group: $finalGroupName", Toast.LENGTH_SHORT).show()
                         onSave()
