@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.window.PopupProperties
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Debug
 import android.widget.Toast
@@ -78,6 +79,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val context = LocalContext.current
     val configImportExport = remember { ConfigImportExport(context) }
+    
+    // Android 13+ 通知权限运行时请求（前台服务通知栏需要）
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     
     // 导入配置的launcher
     val importLauncher = rememberLauncherForActivityResult(

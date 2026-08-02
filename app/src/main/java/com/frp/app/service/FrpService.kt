@@ -36,7 +36,6 @@ class FrpService : Service() {
         
         const val ACTION_START = "com.frp.app.START_FRP"
         const val ACTION_STOP = "com.frp.app.STOP_FRP"
-        const val EXTRA_CONFIG_ID = "config_id"
         
         val logManager = LogManager()
         
@@ -123,17 +122,15 @@ class FrpService : Service() {
                 logManager.addLog(LogLevel.INFO, TAG, "Config file saved: ${configFile.absolutePath}")
                 
                 frpManager.stopFrpc()  // 先停止现有进程
-                if (true) {  // 总是安装frpc
-                    logManager.addLog(LogLevel.INFO, TAG, "Installing frpc binary...")
-                    val installed = frpManager.installFrpc()
-                    if (!installed) {
-                        logManager.addLog(LogLevel.ERROR, TAG, "Failed to install frpc")
-                        FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
-                        updateNotification("Error: frpc not found")
-                        delay(2000)
-                        stopSelf()
-                        return@launch
-                    }
+                logManager.addLog(LogLevel.INFO, TAG, "Installing frpc binary...")
+                val installed = frpManager.installFrpc()
+                if (!installed) {
+                    logManager.addLog(LogLevel.ERROR, TAG, "Failed to install frpc")
+                    FrpStatusHolder.set(this@FrpService, FrpStatus.ERROR)
+                    updateNotification("Error: frpc not found")
+                    delay(2000)
+                    stopSelf()
+                    return@launch
                 }
                 
                 updateNotification("Connecting to ${enabledConfigs.size} configs...")

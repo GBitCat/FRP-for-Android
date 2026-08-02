@@ -184,18 +184,6 @@ class ConfigGenerator(private val context: Context) {
      * 2. 每次启动逐个解析 + UDP 探测 STUN 候选，取第一个当前可达的；
      *    全部不可达则重新解析首选候选，最后回退到已知可用 IP。
      */
-    fun saveConfigFile(server: ServerConfig, config: FrpConfig, linkedConfig: FrpConfig? = null): File {
-        val resolved = resolveConnection(server)
-        val configContent = generateFullConfig(
-            resolved.first, config, linkedConfig,
-            stunServer = resolved.second,
-            serverAddrOriginal = server.serverAddr
-        )
-        val configFile = context.getFileStreamPath("frpc_${config.id}.toml")
-        configFile.writeText(configContent)
-        return configFile
-    }
-
     /**
      * 保存拼接了全部已启用配置的统一 TOML（frpc_all.toml），
      * 一次启动即可使用所有应用配置。
@@ -232,16 +220,6 @@ class ConfigGenerator(private val context: Context) {
             ?: FALLBACK_STUN_SERVER
 
         return server.copy(serverAddr = resolvedAddr) to stun
-    }
-
-    fun readConfigFile(configId: Long): String? {
-        val configFile = context.getFileStreamPath("frpc_$configId.toml")
-        return if (configFile.exists()) configFile.readText() else null
-    }
-
-    fun deleteConfigFile(configId: Long): Boolean {
-        val configFile = context.getFileStreamPath("frpc_$configId.toml")
-        return if (configFile.exists()) configFile.delete() else false
     }
 
     fun validateConfig(config: FrpConfig): String? {
