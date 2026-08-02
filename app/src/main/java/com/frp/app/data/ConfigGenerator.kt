@@ -106,6 +106,13 @@ class ConfigGenerator(private val context: Context) {
             // STUN server：应用层解析 + 探测后的 IP（绕过 Android DNS 限制）
             appendLine("natHoleStunServer = \"$stunServer\"")
             appendLine()
+            // 连接 frps 的 transport 配置（与对端 frpc 保持一致）
+            appendLine("transport.protocol = \"${server.protocol}\"")
+            appendLine("transport.tcpMux = ${server.tcpMux}")
+            appendLine("transport.heartbeatInterval = ${server.heartbeatInterval}")
+            appendLine("transport.heartbeatTimeout = ${server.heartbeatTimeout}")
+            appendLine("transport.tcpMuxKeepaliveInterval = ${server.tcpMuxKeepaliveInterval}")
+            appendLine()
 
             if (linkedConfig != null) {
                 appendLine("# Fallback STCP visitor")

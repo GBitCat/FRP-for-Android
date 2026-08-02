@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -585,12 +587,21 @@ fun ServerEditDialog(
     var port by remember { mutableStateOf((serverConfig?.serverPort ?: 7000).toString()) }
     var token by remember { mutableStateOf(serverConfig?.token ?: "") }
     var showToken by remember { mutableStateOf(false) }
+    
+    // Transport 连接配置
+    var protocol by remember { mutableStateOf(serverConfig?.protocol ?: "tcp") }
+    var tcpMux by remember { mutableStateOf(serverConfig?.tcpMux ?: true) }
+    var heartbeatInterval by remember { mutableStateOf(serverConfig?.heartbeatInterval ?: 30) }
+    var heartbeatTimeout by remember { mutableStateOf(serverConfig?.heartbeatTimeout ?: 90) }
+    var tcpMuxKeepaliveInterval by remember { mutableStateOf(serverConfig?.tcpMuxKeepaliveInterval ?: 30) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Server Connection") },
         text = {
-            Column {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
                 OutlinedTextField(
                     value = addr,
                     onValueChange = { addr = it },
@@ -625,6 +636,66 @@ fun ServerEditDialog(
                     },
                     modifier = Modifier.fillMaxWidth()
                 )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Text(
+                    text = "Transport",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                Text(
+                    text = "Connection settings to frps (keep consistent with peer frpc)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                
+                // Protocol 下拉
+                TransportDropdown(
+                    label = "Protocol",
+                    options = listOf("tcp", "kcp", "quic", "ws", "wss"),
+                    selected = protocol,
+                    onSelected = { protocol = it }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // tcpMux 开关
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("TCP Multiplexing (tcpMux)", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = tcpMux,
+                        onCheckedChange = { tcpMux = it }
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                TransportDropdown(
+                    label = "Heartbeat Interval (s)",
+                    options = listOf(10, 20, 30, 60, 120),
+                    selected = heartbeatInterval,
+                    onSelected = { heartbeatInterval = it }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                TransportDropdown(
+                    label = "Heartbeat Timeout (s)",
+                    options = listOf(30, 60, 90, 120, 180, 300),
+                    selected = heartbeatTimeout,
+                    onSelected = { heartbeatTimeout = it }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                TransportDropdown(
+                    label = "tcpMux Keepalive Interval (s)",
+                    options = listOf(10, 20, 30, 60, 120, 300),
+                    selected = tcpMuxKeepaliveInterval,
+                    onSelected = { tcpMuxKeepaliveInterval = it }
+                )
             }
         },
         confirmButton = {
@@ -634,7 +705,12 @@ fun ServerEditDialog(
                     onSave(ServerConfig(
                         serverAddr = addr.trim(),
                         serverPort = newPort,
-                        token = token.trim()
+                        token = token.trim(),
+                        protocol = protocol,
+                        tcpMux = tcpMux,
+                        heartbeatInterval = heartbeatInterval,
+                        heartbeatTimeout = heartbeatTimeout,
+                        tcpMuxKeepaliveInterval = tcpMuxKeepaliveInterval
                     ))
                 }
             ) {
@@ -647,6 +723,44 @@ fun ServerEditDialog(
             }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun <T> TransportDropdown(
+    label: String,
+    options: List<T>,
+    selected: T,
+    onSelected: (T) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it }
+    ) {
+        OutlinedTextField(
+            value = selected.toString(),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.toString()) },
+                    onClick = {
+                        onSelected(option)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
