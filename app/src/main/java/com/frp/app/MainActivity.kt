@@ -457,14 +457,18 @@ fun TrafficCard() {
             }
             
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // 三等分固定列：标识位置固定，数值以标识为中心居中
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text(
                         text = trafficStats.formatSpeed(trafficState.uploadSpeed),
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1
                     )
                     Text(
                         text = "Upload",
@@ -472,11 +476,15 @@ fun TrafficCard() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text(
                         text = trafficStats.formatSpeed(trafficState.downloadSpeed),
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.secondary
+                        color = MaterialTheme.colorScheme.secondary,
+                        maxLines = 1
                     )
                     Text(
                         text = "Download",
@@ -484,11 +492,15 @@ fun TrafficCard() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text(
                         text = trafficStats.formatBytes(trafficState.totalSent + trafficState.totalReceived),
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.tertiary
+                        color = MaterialTheme.colorScheme.tertiary,
+                        maxLines = 1
                     )
                     Text(
                         text = "Total",
