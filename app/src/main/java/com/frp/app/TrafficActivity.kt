@@ -19,7 +19,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.frp.app.manager.TrafficState
 import com.frp.app.manager.TrafficStats
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import com.frp.app.ui.theme.FRPAndroidTheme
 
 class TrafficActivity : ComponentActivity() {
@@ -46,12 +48,14 @@ fun TrafficScreen(onBack: () -> Unit) {
     val trafficStats = remember { TrafficStats.getInstance() }
     val trafficState by trafficStats.trafficState.collectAsState()
     
-    // 每秒采样 app UID 流量与 TCP 连接数
+    // 每秒采样 app UID 流量与 TCP 连接数（文件 IO 放 IO 线程，避免阻塞主线程）
     LaunchedEffect(Unit) {
         val uid = Process.myUid()
         while (true) {
-            trafficStats.sampleUidTraffic(uid)
-            trafficStats.sampleTcpConnections(uid)
+            withContext(Dispatchers.IO) {
+                trafficStats.sampleUidTraffic(uid)
+                trafficStats.sampleTcpConnections(uid)
+            }
             delay(1000)
         }
     }
