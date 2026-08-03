@@ -659,16 +659,6 @@ fun ServerCard(
                 )
             }
             
-            val tokenDisplay = serverConfig?.token
-            if (!tokenDisplay.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Token: *****",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            
             // 连接类型指示
             if (isRunning && connectionStatus.type != ConnectionType.UNKNOWN) {
                 Spacer(modifier = Modifier.height(8.dp))
