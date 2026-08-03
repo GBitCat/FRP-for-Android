@@ -659,51 +659,59 @@ fun ServerCard(
                 )
             }
             
-            // 连接类型指示
-            if (isRunning && connectionStatus.type != ConnectionType.UNKNOWN) {
-                Spacer(modifier = Modifier.height(8.dp))
-                val connColor = when (connectionStatus.type) {
-                    ConnectionType.P2P -> Color(0xFF4CAF50)
-                    ConnectionType.RELAY -> Color(0xFFFF9800)
-                    ConnectionType.ERROR -> MaterialTheme.colorScheme.error
-                    ConnectionType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
-                }
-                val connIcon = when (connectionStatus.type) {
-                    ConnectionType.P2P -> Icons.Default.Link
-                    ConnectionType.RELAY -> Icons.Default.SwapHoriz
-                    ConnectionType.ERROR -> Icons.Default.ErrorOutline
-                    ConnectionType.UNKNOWN -> Icons.Default.HelpOutline
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(connColor.copy(alpha = 0.1f), shape = MaterialTheme.shapes.small)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Icon(
-                        imageVector = connIcon,
-                        contentDescription = null,
-                        tint = connColor,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = connectionStatus.detail,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = connColor
-                    )
-                }
+            // 连接方式：未启动时显示无连接
+            Spacer(modifier = Modifier.height(8.dp))
+            val connColor = when {
+                !isRunning -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                connectionStatus.type == ConnectionType.P2P -> Color(0xFF4CAF50)
+                connectionStatus.type == ConnectionType.RELAY -> Color(0xFFFF9800)
+                connectionStatus.type == ConnectionType.ERROR -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
-            
-            if (isRunning && activeConfig != null) {
-                Spacer(modifier = Modifier.height(8.dp))
+            val connIcon = when {
+                !isRunning -> Icons.Default.HelpOutline
+                connectionStatus.type == ConnectionType.P2P -> Icons.Default.Link
+                connectionStatus.type == ConnectionType.RELAY -> Icons.Default.SwapHoriz
+                connectionStatus.type == ConnectionType.ERROR -> Icons.Default.ErrorOutline
+                else -> Icons.Default.HelpOutline
+            }
+            val connText = when {
+                !isRunning -> "No connection"
+                connectionStatus.type == ConnectionType.UNKNOWN -> "Connecting..."
+                else -> connectionStatus.detail
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(connColor.copy(alpha = 0.1f), shape = MaterialTheme.shapes.small)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Icon(
+                    imageVector = connIcon,
+                    contentDescription = null,
+                    tint = connColor,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Active: " + activeConfig.name,
+                    text = connText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = connColor
                 )
             }
+            
+            // Active 状态：未启动时显示未启动
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = if (isRunning && activeConfig != null) {
+                    "Active: " + activeConfig.name
+                } else {
+                    "Active: Not running"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
