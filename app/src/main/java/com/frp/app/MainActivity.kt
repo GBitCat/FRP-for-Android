@@ -94,6 +94,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     // 底部导航当前页：0=仪表盘 1=配置 2=设置
     var selectedTab by remember { mutableStateOf(0) }
     
+    // Server 编辑对话框（配置 Tab 入口）
+    var showServerEditDialog by remember { mutableStateOf(false) }
+    
     Scaffold(
         topBar = {
             TopAppBar(
@@ -158,7 +161,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 frpStatus = frpStatus,
                 connectionStatus = connectionStatus,
                 activeConfig = configs.find { it.id == activeConfigId },
-                onSave = { viewModel.saveServerConfig(it) },
                 onStart = { viewModel.startAll() },
                 onStop = { viewModel.stopFrp() }
             )
@@ -183,6 +185,42 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             // ========== 配置 Tab ==========
             if (selectedTab == 1) {
                 Column(modifier = Modifier.padding(16.dp)) {
+            // Server 配置栏（编辑入口）
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Dns,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "FRPS Server",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "${serverConfig?.serverAddr ?: "Not set"}:${serverConfig?.serverPort ?: 0}",
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = { showServerEditDialog = true }) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit server")
+                    }
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
             // 配置列表
             Text(
                 text = "Configurations (${configs.size})",
@@ -257,6 +295,18 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 SettingsContent()
             }
         }
+    }
+    
+    // Server 编辑对话框（配置 Tab 的 FRPS Server 栏）
+    if (showServerEditDialog) {
+        ServerEditDialog(
+            serverConfig = serverConfig,
+            onDismiss = { showServerEditDialog = false },
+            onSave = { newConfig ->
+                showServerEditDialog = false
+                viewModel.saveServerConfig(newConfig)
+            }
+        )
     }
 }
 @Composable
@@ -526,7 +576,6 @@ fun IpAddressCard() {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ServerCard(
     serverConfig: ServerConfig?,
@@ -534,20 +583,24 @@ fun ServerCard(
     frpStatus: FrpStatus,
     connectionStatus: ConnectionStatus,
     activeConfig: FrpConfig?,
-    onSave: (ServerConfig) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    var showEditDialog by remember { mutableStateOf(false) }
-
+    val statusColor = when (frpStatus) {
+        FrpStatus.RUNNING -> Color(0xFF4CAF50)
+        FrpStatus.ERROR -> MaterialTheme.colorScheme.error
+        FrpStatus.STOPPED -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    }
+    val statusText = when (frpStatus) {
+        FrpStatus.RUNNING -> "Running"
+        FrpStatus.ERROR -> "Error"
+        FrpStatus.STOPPED -> "Stopped"
+    }
+    val displayAddr = serverConfig?.serverAddr ?: "Not set"
+    val displayPort = (serverConfig?.serverPort ?: 0).toString()
+    
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = { expanded = !expanded },
-                onLongClick = { if (!isRunning) showEditDialog = true }
-            ),
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = if (isRunning) {
                 MaterialTheme.colorScheme.primaryContainer
@@ -559,18 +612,7 @@ fun ServerCard(
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-            val statusColor = when (frpStatus) {
-                FrpStatus.RUNNING -> Color(0xFF4CAF50)
-                FrpStatus.ERROR -> MaterialTheme.colorScheme.error
-                FrpStatus.STOPPED -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-            }
-            val statusText = when (frpStatus) {
-                FrpStatus.RUNNING -> "Running"
-                FrpStatus.ERROR -> "Error"
-                FrpStatus.STOPPED -> "Stopped"
-            }
-
-            // 标题行
+            // 标题行：图标 + 信息 + 状态 + 运行开关
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -581,33 +623,20 @@ fun ServerCard(
                     tint = if (isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-
-                if (!expanded) {
-                    // 折叠态：IP:Port
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "FRPS Server",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        val displayAddr = serverConfig?.serverAddr ?: ""
-                        val displayPort = (serverConfig?.serverPort ?: 0).toString()
-                        if (displayAddr.isNotBlank()) {
-                            Text(
-                                text = displayAddr + ":" + displayPort,
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                } else {
+                
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "FRPS Server",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f)
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = displayAddr + ":" + displayPort,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
-                // 状态圆点
+                
+                // 状态圆点 + 文本
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Canvas(modifier = Modifier.size(10.dp)) {
                         drawCircle(color = statusColor)
@@ -619,122 +648,73 @@ fun ServerCard(
                         color = statusColor
                     )
                 }
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = if (expanded) "Collapse" else "Expand",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                Spacer(modifier = Modifier.width(8.dp))
+                
+                // 运行开关（启动/停止）
+                Switch(
+                    checked = isRunning,
+                    onCheckedChange = { enabled ->
+                        if (enabled) onStart() else onStop()
+                    }
                 )
             }
-
-            // 展开后：只读展示
-            if (expanded) {
-                Spacer(modifier = Modifier.height(12.dp))
-
-                val displayAddr = serverConfig?.serverAddr ?: "Not set"
-                val displayPort = (serverConfig?.serverPort ?: 0).toString()
+            
+            val tokenDisplay = serverConfig?.token
+            if (!tokenDisplay.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = displayAddr + ":" + displayPort,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+                    text = "Token: *****",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-
-                val tokenDisplay = serverConfig?.token
-                if (!tokenDisplay.isNullOrBlank()) {
+            }
+            
+            // 连接类型指示
+            if (isRunning && connectionStatus.type != ConnectionType.UNKNOWN) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val connColor = when (connectionStatus.type) {
+                    ConnectionType.P2P -> Color(0xFF4CAF50)
+                    ConnectionType.RELAY -> Color(0xFFFF9800)
+                    ConnectionType.ERROR -> MaterialTheme.colorScheme.error
+                    ConnectionType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                val connIcon = when (connectionStatus.type) {
+                    ConnectionType.P2P -> Icons.Default.Link
+                    ConnectionType.RELAY -> Icons.Default.SwapHoriz
+                    ConnectionType.ERROR -> Icons.Default.ErrorOutline
+                    ConnectionType.UNKNOWN -> Icons.Default.HelpOutline
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(connColor.copy(alpha = 0.1f), shape = MaterialTheme.shapes.small)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = connIcon,
+                        contentDescription = null,
+                        tint = connColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Token: *****",
+                        text = connectionStatus.detail,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = connColor
                     )
                 }
-
-                // 连接类型指示
-                if (isRunning && connectionStatus.type != ConnectionType.UNKNOWN) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    val connColor = when (connectionStatus.type) {
-                        ConnectionType.P2P -> Color(0xFF4CAF50)
-                        ConnectionType.RELAY -> Color(0xFFFF9800)
-                        ConnectionType.ERROR -> MaterialTheme.colorScheme.error
-                        ConnectionType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                    val connIcon = when (connectionStatus.type) {
-                        ConnectionType.P2P -> Icons.Default.Link
-                        ConnectionType.RELAY -> Icons.Default.SwapHoriz
-                        ConnectionType.ERROR -> Icons.Default.ErrorOutline
-                        ConnectionType.UNKNOWN -> Icons.Default.HelpOutline
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(connColor.copy(alpha = 0.1f), shape = MaterialTheme.shapes.small)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = connIcon,
-                            contentDescription = null,
-                            tint = connColor,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = connectionStatus.detail,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = connColor
-                        )
-                    }
-                }
-
-                if (isRunning) {
-                    if (activeConfig != null) {
-                        Text(
-                            text = "Active: " + activeConfig.name,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = onStop,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Stop, contentDescription = "Stop")
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Stop FRP")
-                    }
-                } else {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = onStart,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "Start")
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Start FRP (all enabled)")
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Long press to edit server",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
-                }
+            }
+            
+            if (isRunning && activeConfig != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Active: " + activeConfig.name,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
-    }
-
-    // 长按编辑对话框
-    if (showEditDialog) {
-        ServerEditDialog(
-            serverConfig = serverConfig,
-            onDismiss = { showEditDialog = false },
-            onSave = { newConfig ->
-                showEditDialog = false
-                onSave(newConfig)
-            }
-        )
     }
 }
 
