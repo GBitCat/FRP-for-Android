@@ -189,8 +189,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             
             Spacer(modifier = Modifier.height(12.dp))
             
-            // 流量统计卡片（紧凑版，点击进入详情）
-            TrafficCard()
+            // 流量统计卡片（临时移除：验证是否影响传输速度）
+            // TrafficCard()
             
             Spacer(modifier = Modifier.height(12.dp))
             
