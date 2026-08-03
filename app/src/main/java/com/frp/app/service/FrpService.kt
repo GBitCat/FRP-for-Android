@@ -225,6 +225,21 @@ class FrpService : Service() {
         }
     }
 
+    /**
+     * 通知栏状态颜色映射（与主界面一致）：
+     * P2P 绿 / 中转橙 / 错误红 / 其他灰
+     */
+    private fun notificationColor(): Int {
+        val frpStatus = FrpStatusHolder.status.value
+        val connType = ConnectionStatusParser.getInstance().status.value.type
+        return when {
+            frpStatus == FrpStatus.ERROR -> 0xFFF44336.toInt()
+            connType == ConnectionType.P2P -> 0xFF4CAF50.toInt()
+            connType == ConnectionType.RELAY -> 0xFFFF9800.toInt()
+            else -> 0xFF9E9E9E.toInt()
+        }
+    }
+
     private fun createNotification(contentText: String, subtitle: String? = null): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -249,6 +264,7 @@ class FrpService : Service() {
             .setContentIntent(pendingIntent)
             .addAction(R.drawable.ic_stop, "Stop", stopIntent)
             .setOngoing(true)
+            .setColor(notificationColor())
 
         if (subtitle != null) {
             builder.setSubText(subtitle)
@@ -278,6 +294,7 @@ class FrpService : Service() {
             .setContentIntent(pendingIntent)
             .addAction(R.drawable.ic_stop, "Stop", stopIntent)
             .setOngoing(true)
+            .setColor(notificationColor())
             .build()
         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         nm.notify(NOTIFICATION_ID, notification)
