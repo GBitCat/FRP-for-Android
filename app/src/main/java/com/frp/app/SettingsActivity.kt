@@ -59,7 +59,7 @@ class SettingsActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsContent() {
     val context = LocalContext.current
     
     // 设置状态
@@ -71,24 +71,11 @@ fun SettingsScreen(onBack: () -> Unit) {
     var darkMode by remember { mutableStateOf(false) }
     var logRetention by remember { mutableStateOf("7") }
     
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
-        ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+    ) {
             // 通用设置
             Text(
                 text = "General",
@@ -279,6 +266,33 @@ fun SettingsScreen(onBack: () -> Unit) {
                     .padding(16.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
+        }
+}
+
+/**
+ * 设置页（独立 Activity 用，主界面设置 Tab 直接使用 [SettingsContent]）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(onBack: () -> Unit) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            SettingsContent()
         }
     }
 }
