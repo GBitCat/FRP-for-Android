@@ -64,8 +64,9 @@ fun FRPAndroidTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = darkTheme
+            // 状态栏背景与 TopAppBar 保持一致（primaryContainer），图标明暗随主题
+            window.statusBarColor = colorScheme.primaryContainer.toArgb()
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }
 
