@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.Debug
+import android.os.Process
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -43,6 +44,7 @@ import com.frp.app.data.FrpConfig
 import com.frp.app.data.FrpStatus
 import com.frp.app.manager.ConnectionStatus
 import com.frp.app.manager.ConnectionType
+import com.frp.app.manager.TrafficStats
 import com.frp.app.data.ServerConfig
 import com.frp.app.ui.theme.FRPAndroidTheme
 import com.frp.app.utils.NetworkUtils
@@ -131,6 +133,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     // 菜单状态
     var showMenu by remember { mutableStateOf(false) }
     
+    // 底部导航当前页：0=仪表盘 1=配置 2=设置
+    var selectedTab by remember { mutableStateOf(0) }
+    
     Scaffold(
         topBar = {
             TopAppBar(
@@ -147,15 +152,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     ) {
                         Icon(Icons.Default.List, contentDescription = "Logs")
-                    }
-                    
-                    // 流量统计按钮
-                    IconButton(
-                        onClick = {
-                            context.startActivity(Intent(context, TrafficActivity::class.java))
-                        }
-                    ) {
-                        Icon(Icons.Default.DataUsage, contentDescription = "Traffic")
                     }
                     
                     // 更多选项菜单
@@ -189,25 +185,41 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             },
                             leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Settings") },
-                            onClick = {
-                                showMenu = false
-                                context.startActivity(Intent(context, SettingsActivity::class.java))
-                            },
-                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) }
-                        )
                     }
                 }
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    context.startActivity(Intent(context, ConfigEditActivity::class.java))
+            if (selectedTab == 1) {
+                FloatingActionButton(
+                    onClick = {
+                        context.startActivity(Intent(context, ConfigEditActivity::class.java))
+                    }
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Config")
                 }
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Config")
+            }
+        },
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = { Icon(Icons.Default.Dashboard, contentDescription = null) },
+                    label = { Text("Dashboard") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    icon = { Icon(Icons.Default.List, contentDescription = null) },
+                    label = { Text("Configs") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    label = { Text("Settings") }
+                )
             }
         }
     ) { paddingValues ->
@@ -215,9 +227,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp)
         ) {
-            // 服务器连接配置卡片（替换原状态卡片位置）
+            // ========== 仪表盘 Tab ==========
+            if (selectedTab == 0) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                ) {
+            // 服务器连接配置卡片
             ServerCard(
                 serverConfig = serverConfig,
                 isRunning = isRunning,
@@ -241,6 +260,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             
             Spacer(modifier = Modifier.height(12.dp))
             
+            // 流量统计卡片（紧凑版，点击进入详情）
+            TrafficCard()
+                }
+            }
+            
+            // ========== 配置 Tab ==========
+            if (selectedTab == 1) {
+                Column(modifier = Modifier.padding(16.dp)) {
             // 配置列表
             Text(
                 text = "Configurations (${configs.size})",
@@ -306,6 +333,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     }
                 }
+                }
+                }
+            }
+            
+            // ========== 设置 Tab ==========
+            if (selectedTab == 2) {
+                SettingsContent()
             }
         }
     }
@@ -388,6 +422,107 @@ fun MemoryCard() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TrafficCard() {
+    val context = LocalContext.current
+    val trafficStats = remember { TrafficStats.getInstance() }
+    val trafficState by trafficStats.trafficState.collectAsState()
+    
+    // 每秒采样 app UID 流量与 TCP 连接数（与 TrafficActivity 共用单例）
+    LaunchedEffect(Unit) {
+        val uid = Process.myUid()
+        while (true) {
+            trafficStats.sampleUidTraffic(uid)
+            trafficStats.sampleTcpConnections(uid)
+            delay(1000)
+        }
+    }
+    
+    Card(
+        onClick = { context.startActivity(Intent(context, TrafficActivity::class.java)) },
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 8.dp)
+            ) {
+                Icon(
+                    Icons.Default.DataUsage,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Traffic",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = "${trafficState.activeConnections} conn",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Icon(
+                    Icons.Default.ChevronRight,
+                    contentDescription = "Details",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = trafficStats.formatSpeed(trafficState.uploadSpeed),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Upload",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = trafficStats.formatSpeed(trafficState.downloadSpeed),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    Text(
+                        text = "Download",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = trafficStats.formatBytes(trafficState.totalSent + trafficState.totalReceived),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                    Text(
+                        text = "Total",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
