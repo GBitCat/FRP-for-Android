@@ -194,6 +194,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 Column(modifier = Modifier.padding(16.dp)) {
             // Server 配置栏（编辑入口）
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -339,6 +340,7 @@ fun MemoryCard() {
     val heapPercent = if (heapMaxMb > 0) heapUsedMb / heapMaxMb else 0f
     
     Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         modifier = Modifier
             .fillMaxWidth()
             .fillMaxHeight(),
@@ -418,6 +420,7 @@ fun TrafficCard() {
     }
     
     Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         onClick = { context.startActivity(Intent(context, TrafficActivity::class.java)) },
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -519,6 +522,7 @@ fun IpAddressCard() {
     val ipAddresses = remember { NetworkUtils.getDeviceIpAddresses(context) }
     
     Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         modifier = Modifier
             .fillMaxWidth()
             .fillMaxHeight(),
@@ -622,6 +626,7 @@ fun ServerCard(
     val displayName = serverConfig?.name?.ifBlank { "FRPS Server" } ?: "FRPS Server"
     
     Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = if (isRunning) {
@@ -971,6 +976,7 @@ fun ConfigItem(
     
     Box(modifier = Modifier.fillMaxWidth()) {
         Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 4.dp)
@@ -1083,6 +1089,7 @@ fun ConfigGroupItem(
     var showContextMenu by remember { mutableStateOf(false) }
     
     Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
