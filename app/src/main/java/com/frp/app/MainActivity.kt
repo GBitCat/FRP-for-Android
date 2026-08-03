@@ -40,7 +40,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import com.frp.app.data.ConfigImportExport
 import com.frp.app.data.FrpConfig
 import com.frp.app.data.FrpStatus
@@ -328,11 +330,12 @@ fun MemoryCard() {
     var heapUsedMb by remember { mutableStateOf(0f) }
     var heapMaxMb by remember { mutableStateOf(0f) }
     
-    // 每 2 秒刷新一次
+    // 每 2 秒刷新一次（Debug.getMemoryInfo 有开销，放 IO 线程避免阻塞主线程）
     LaunchedEffect(Unit) {
         while (true) {
-            val memInfo = Debug.MemoryInfo()
-            Debug.getMemoryInfo(memInfo)
+            val memInfo = withContext(Dispatchers.IO) {
+                Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }
+            }
             pssMb = memInfo.getTotalPss() / 1024f
             val runtime = Runtime.getRuntime()
             heapUsedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024f * 1024f)
@@ -416,11 +419,14 @@ fun TrafficCard() {
     val trafficState by trafficStats.trafficState.collectAsState()
     
     // 每秒采样 app UID 流量与 TCP 连接数（与 TrafficActivity 共用单例）
+    // 采样含文件 IO（/proc/net/tcp），必须放到 IO 线程避免阻塞主线程导致触摸卡顿
     LaunchedEffect(Unit) {
         val uid = Process.myUid()
         while (true) {
-            trafficStats.sampleUidTraffic(uid)
-            trafficStats.sampleTcpConnections(uid)
+            withContext(Dispatchers.IO) {
+                trafficStats.sampleUidTraffic(uid)
+                trafficStats.sampleTcpConnections(uid)
+            }
             delay(1000)
         }
     }
