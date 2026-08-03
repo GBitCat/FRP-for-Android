@@ -48,17 +48,17 @@ fun TrafficScreen(onBack: () -> Unit) {
     val trafficStats = remember { TrafficStats.getInstance() }
     val trafficState by trafficStats.trafficState.collectAsState()
     
-    // 每秒采样 app UID 流量与 TCP 连接数（文件 IO 放 IO 线程，避免阻塞主线程）
-    LaunchedEffect(Unit) {
-        val uid = Process.myUid()
-        while (true) {
-            withContext(Dispatchers.IO) {
-                trafficStats.sampleUidTraffic(uid)
-                trafficStats.sampleTcpConnections(uid)
-            }
-            delay(1000)
-        }
-    }
+    // 每秒采样 app UID 流量与 TCP 连接数（临时停用：验证是否影响传输速度）
+    // LaunchedEffect(Unit) {
+    //     val uid = Process.myUid()
+    //     while (true) {
+    //         withContext(Dispatchers.IO) {
+    //             trafficStats.sampleUidTraffic(uid)
+    //             trafficStats.sampleTcpConnections(uid)
+    //         }
+    //         delay(1000)
+    //     }
+    // }
     
     Scaffold(
         topBar = {
