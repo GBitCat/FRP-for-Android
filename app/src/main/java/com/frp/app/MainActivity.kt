@@ -511,6 +511,7 @@ fun TrafficCard() {
     val context = LocalContext.current
     val trafficStats = remember { TrafficStats.getInstance() }
     val trafficState by trafficStats.trafficState.collectAsState()
+    val trafficEnabled by trafficStats.enabled.collectAsState()
     
     // 同步设置中的启用状态（默认禁用）
     LaunchedEffect(Unit) {
@@ -532,6 +533,8 @@ fun TrafficCard() {
         }
     }
     
+    // 禁用时整卡隐藏
+    if (trafficEnabled) {
     Card(
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
             shape = RoundedCornerShape(16.dp),
@@ -628,6 +631,7 @@ fun TrafficCard() {
                 }
             }
         }
+    }
     }
 }
 
