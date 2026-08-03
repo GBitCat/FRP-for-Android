@@ -82,6 +82,7 @@ fun TrafficScreen(onBack: () -> Unit) {
         ) {
             // 实时速度卡片
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -150,6 +151,7 @@ fun TrafficScreen(onBack: () -> Unit) {
             
             // 总流量卡片
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -224,6 +226,7 @@ fun TrafficScreen(onBack: () -> Unit) {
             
             // 连接统计卡片
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -274,6 +277,7 @@ fun TrafficScreen(onBack: () -> Unit) {
             
             // 说明卡片
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant

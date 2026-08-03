@@ -132,6 +132,7 @@ fun SettingsContent() {
             )
             
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
@@ -208,6 +209,7 @@ fun SettingsContent() {
             )
             
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
@@ -248,6 +250,7 @@ fun SettingsContent() {
             )
             
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
@@ -295,6 +298,7 @@ fun SettingsContent() {
             var showLicensesDialog by remember { mutableStateOf(false) }
             
             Card(
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
