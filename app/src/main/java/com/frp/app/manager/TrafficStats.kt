@@ -20,6 +20,14 @@ class TrafficStats private constructor() {
             }
     }
     
+    // 是否启用流量统计（设置中可切换；禁用时不采样，消除轮询开销）
+    private val _enabled = MutableStateFlow(false)
+    val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
+    
+    fun setEnabled(value: Boolean) {
+        _enabled.value = value
+    }
+    
     // 流量计数器
     private val totalBytesSent = AtomicLong(0)
     private val totalBytesReceived = AtomicLong(0)

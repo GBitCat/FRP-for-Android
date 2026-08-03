@@ -5,6 +5,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.window.PopupProperties
 
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -189,8 +190,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             
             Spacer(modifier = Modifier.height(12.dp))
             
-            // 流量统计卡片（临时移除：验证是否影响传输速度）
-            // TrafficCard()
+            // 流量统计卡片（可在设置中启用/禁用）
+            TrafficCard()
             
             Spacer(modifier = Modifier.height(12.dp))
             
@@ -511,14 +512,21 @@ fun TrafficCard() {
     val trafficStats = remember { TrafficStats.getInstance() }
     val trafficState by trafficStats.trafficState.collectAsState()
     
-    // 每秒采样 app UID 流量与 TCP 连接数（与 TrafficActivity 共用单例）
-    // 采样含文件 IO（/proc/net/tcp），必须放到 IO 线程避免阻塞主线程导致触摸卡顿
+    // 同步设置中的启用状态（默认禁用）
+    LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("frp_settings", Context.MODE_PRIVATE)
+        trafficStats.setEnabled(prefs.getBoolean("traffic_stats_enabled", false))
+    }
+    
+    // 每秒采样（仅启用时；禁用时零开销）
     LaunchedEffect(Unit) {
         val uid = Process.myUid()
         while (true) {
-            withContext(Dispatchers.IO) {
-                trafficStats.sampleUidTraffic(uid)
-                trafficStats.sampleTcpConnections(uid)
+            if (trafficStats.enabled.value) {
+                withContext(Dispatchers.IO) {
+                    trafficStats.sampleUidTraffic(uid)
+                    trafficStats.sampleTcpConnections(uid)
+                }
             }
             delay(1000)
         }
