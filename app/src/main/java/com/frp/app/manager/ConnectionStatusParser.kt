@@ -44,6 +44,10 @@ class ConnectionStatusParser private constructor() {
 
     private val _status = MutableStateFlow(ConnectionStatus())
     val status: StateFlow<ConnectionStatus> = _status.asStateFlow()
+    
+    // 每个应用（visitor）各自的连接状态：visitor 名 -> 状态
+    private val _appStatuses = MutableStateFlow<Map<String, ConnectionStatus>>(emptyMap())
+    val appStatuses: StateFlow<Map<String, ConnectionStatus>> = _appStatuses.asStateFlow()
 
     private var lastLogCount = 0
     private var collectJob: Job? = null
@@ -75,6 +79,7 @@ class ConnectionStatusParser private constructor() {
     /** 重置当前状态（FRP 停止时调用） */
     fun reset() {
         _status.value = ConnectionStatus()
+        _appStatuses.value = emptyMap()
     }
 
     private fun parseNewLogs(logs: List<LogEntry>) {
@@ -82,65 +87,107 @@ class ConnectionStatusParser private constructor() {
             if (log.tag != "frpc") continue
             val msg = log.message.replace(ANSI_REGEX, "")
 
-            // === XTCP P2P 成功 ===
-            if (msg.contains("nathole traffic", ignoreCase = true)) {
-                updateStatus(ConnectionType.P2P, "P2P via XTCP")
+            // 提取事件前的 visitor 名（日志格式：[runid] [visitorName] event...）
+            fun visitorName(vararg keywords: String): String? {
+                for (kw in keywords) {
+                    val m = Regex("\\[([^\\]]+)\\] $kw").find(msg)
+                    if (m != null) return m.groupValues[1]
+                }
+                return null
+            }
+
+            // === XTCP P2P 成功（按应用标记） ===
+            val p2pName = visitorName(
+                "establishing nat hole connection successful",
+                "nathole traffic",
+                "punch hole", "punch ok"
+            )
+            if (p2pName != null) {
+                setAppStatus(p2pName, ConnectionType.P2P, "P2P via XTCP")
+                aggregateGlobal()
                 continue
             }
-            // frp v0.70.1: MakeHole 成功并初始化隧道会话 —— 确定性的 P2P 成功信号
-            if (msg.contains("establishing nat hole connection successful", ignoreCase = true)) {
-                updateStatus(ConnectionType.P2P, "P2P via XTCP")
-                continue
-            }
-            if (msg.contains("connection established", ignoreCase = true) && msg.contains("xtcp", ignoreCase = true)) {
-                updateStatus(ConnectionType.P2P, "P2P via XTCP")
-                continue
-            }
-            if (msg.contains("punch hole", ignoreCase = true) || msg.contains("punch ok", ignoreCase = true)) {
-                updateStatus(ConnectionType.P2P, "P2P via XTCP")
+
+            // === XTCP 打洞失败 → 回落中继（按应用标记） ===
+            val failName = visitorName(
+                "nathole prepare error", "nathole precheck error",
+                "make hole error", "init tunnel session error",
+                "open tunnel error"
+            )
+            if (failName != null) {
+                setAppStatus(failName, ConnectionType.RELAY, "XTCP failed, relay via STCP")
+                aggregateGlobal()
                 continue
             }
 
             // === 配置错误：serverName 不匹配 ===
             if (msg.contains("doesn't exist", ignoreCase = true)) {
-                // "xtcp server for [xxx] doesn't exist" 或 "custom listener for [xxx] doesn't exist"
                 val nameMatch = Regex("for \\[(.+?)\\]").find(msg)
                 val badName = nameMatch?.groupValues?.get(1) ?: "unknown"
-                updateStatus(ConnectionType.ERROR, "Server proxy '$badName' not found - check Server Proxy Name")
+                setAppStatus(badName, ConnectionType.ERROR, "Server proxy '$badName' not found")
+                aggregateGlobal()
                 continue
             }
 
-            // === XTCP 失败 → STCP fallback ===
-            if (msg.contains("open tunnel timeout", ignoreCase = true) && msg.contains("xtcp", ignoreCase = true)) {
-                // 只有在没有更具体的错误时才显示通用超时
-                if (_status.value.type != ConnectionType.ERROR) {
-                    updateStatus(ConnectionType.RELAY, "XTCP timeout, relay via STCP")
-                }
-                continue
-            }
-            if (msg.contains("nathole precheck error", ignoreCase = true)) {
-                if (_status.value.type != ConnectionType.ERROR) {
-                    updateStatus(ConnectionType.RELAY, "XTCP precheck failed, using STCP relay")
-                }
-                continue
-            }
-
-            // === STCP 中转成功 ===
+            // === STCP 中转成功（全局） ===
             if (msg.contains("connection established", ignoreCase = true) && msg.contains("stcp", ignoreCase = true)) {
                 updateStatus(ConnectionType.RELAY, "Relay via STCP")
                 continue
             }
-            if (msg.contains("local tcp connection", ignoreCase = true) && msg.contains("stcp", ignoreCase = true)) {
-                updateStatus(ConnectionType.RELAY, "Relay via STCP")
+
+            // === visitor 启动：初始化各应用状态 ===
+            val addedMatch = Regex("visitor added: \\[([^\\]]+)\\]").find(msg)
+            if (addedMatch != null) {
+                val names = addedMatch.groupValues[1].split(" ").filter { it.isNotBlank() }
+                val map = _appStatuses.value.toMutableMap()
+                names.forEach { name -> map.putIfAbsent(name, ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")) }
+                _appStatuses.value = map
+                aggregateGlobal()
                 continue
             }
 
-            // visitor 启动
-            if (msg.contains("start visitor success", ignoreCase = true)) {
-                if (_status.value.type == ConnectionType.UNKNOWN) {
-                    _status.value = ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
-                }
+            // === 兜底：全局状态更新（无名字事件，保持原语义） ===
+            when {
+                msg.contains("nathole traffic", ignoreCase = true) ->
+                    updateStatus(ConnectionType.P2P, "P2P via XTCP")
+                msg.contains("connection established", ignoreCase = true) && msg.contains("xtcp", ignoreCase = true) ->
+                    updateStatus(ConnectionType.P2P, "P2P via XTCP")
+                msg.contains("open tunnel timeout", ignoreCase = true) && msg.contains("xtcp", ignoreCase = true) ->
+                    if (_status.value.type != ConnectionType.ERROR) updateStatus(ConnectionType.RELAY, "XTCP timeout, relay via STCP")
+                msg.contains("nathole precheck error", ignoreCase = true) ->
+                    if (_status.value.type != ConnectionType.ERROR) updateStatus(ConnectionType.RELAY, "XTCP precheck failed, using STCP relay")
+                msg.contains("local tcp connection", ignoreCase = true) && msg.contains("stcp", ignoreCase = true) ->
+                    updateStatus(ConnectionType.RELAY, "Relay via STCP")
+                msg.contains("start visitor success", ignoreCase = true) ->
+                    if (_status.value.type == ConnectionType.UNKNOWN) {
+                        _status.value = ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
+                    }
             }
+        }
+    }
+
+    /** 设置单个应用（visitor）的连接状态 */
+    private fun setAppStatus(name: String, type: ConnectionType, detail: String) {
+        if (name.isBlank()) return
+        val map = _appStatuses.value.toMutableMap()
+        map[name] = ConnectionStatus(type, detail)
+        _appStatuses.value = map
+        Log.d(TAG, "App status [$name]: $type - $detail")
+    }
+
+    /** 聚合全局状态：ERROR 优先 > P2P > RELAY > UNKNOWN */
+    private fun aggregateGlobal() {
+        val apps = _appStatuses.value.values
+        val global = when {
+            apps.any { it.type == ConnectionType.ERROR } -> ConnectionStatus(ConnectionType.ERROR, "One or more configs error")
+            apps.any { it.type == ConnectionType.P2P } -> ConnectionStatus(ConnectionType.P2P, "P2P via XTCP")
+            apps.any { it.type == ConnectionType.RELAY } -> ConnectionStatus(ConnectionType.RELAY, "Relay via STCP")
+            apps.isNotEmpty() -> ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
+            else -> ConnectionStatus()
+        }
+        if (global != _status.value) {
+            _status.value = global
+            Log.d(TAG, "Connection status: ${global.type} - ${global.detail}")
         }
     }
 

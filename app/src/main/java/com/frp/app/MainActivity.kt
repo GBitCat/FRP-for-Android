@@ -83,6 +83,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val activeConfigId by viewModel.activeConfigId.collectAsState()
     val serverConfig by viewModel.serverConfig.collectAsState(initial = null)
     val connectionStatus by viewModel.connectionStatus.collectAsState()
+    val appStatuses by viewModel.appStatuses.collectAsState()
     val context = LocalContext.current
     
     // Android 13+ 通知权限运行时请求（前台服务通知栏需要）
@@ -190,6 +191,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             
             // 流量统计卡片（紧凑版，点击进入详情）
             TrafficCard()
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // 各应用连接状态卡片
+            AppConnectionCard(appStatuses = appStatuses)
                 }
             }
             
@@ -407,6 +413,93 @@ fun MemoryCard() {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@Composable
+fun AppConnectionCard(appStatuses: Map<String, ConnectionStatus>) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 8.dp)
+            ) {
+                Icon(
+                    Icons.Default.Apps,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Applications",
+                    style = MaterialTheme.typography.titleSmall
+                )
+            }
+            
+            if (appStatuses.isEmpty()) {
+                Text(
+                    text = "没有应用",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                // 最多显示 3 行，超出可滚动
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 108.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    appStatuses.forEach { (name, status) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1
+                            )
+                            val color = when (status.type) {
+                                ConnectionType.P2P -> Color(0xFF4CAF50)
+                                ConnectionType.RELAY -> Color(0xFFFF9800)
+                                ConnectionType.ERROR -> Color(0xFFF44336)
+                                ConnectionType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            }
+                            val label = when (status.type) {
+                                ConnectionType.P2P -> "P2P"
+                                ConnectionType.RELAY -> "Relay"
+                                ConnectionType.ERROR -> "Error"
+                                ConnectionType.UNKNOWN -> "Connecting..."
+                            }
+                            Canvas(modifier = Modifier.size(8.dp)) {
+                                drawCircle(color = color)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = color
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

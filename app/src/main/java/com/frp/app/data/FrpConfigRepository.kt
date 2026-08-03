@@ -28,6 +28,12 @@ class FrpConfigRepository(
         }
     }
     
+    suspend fun getAllConfigsSync(): List<FrpConfig> {
+        return withContext(Dispatchers.IO) {
+            frpConfigDao.getAllConfigsSync()
+        }
+    }
+    
     suspend fun getConfigById(id: Long): FrpConfig? {
         return withContext(Dispatchers.IO) {
             frpConfigDao.getConfigById(id)
