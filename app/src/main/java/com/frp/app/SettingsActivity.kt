@@ -21,6 +21,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import com.frp.app.data.ConfigImportExport
+import com.frp.app.manager.TrafficStats
 import com.frp.app.viewmodel.MainViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalContext
@@ -119,6 +120,7 @@ fun SettingsContent() {
     var keepAlive by remember { mutableStateOf(true) }
     var darkMode by remember { mutableStateOf(false) }
     var logRetention by remember { mutableStateOf("7") }
+    var trafficStatsEnabled by remember { mutableStateOf(prefs.getBoolean("traffic_stats_enabled", false)) }
     
     Column(
         modifier = Modifier
@@ -197,6 +199,21 @@ fun SettingsContent() {
                             prefs.edit().putBoolean("hide_from_recents", enabled).apply()
                             // 对所有 activity 生效
                             applyExcludeFromRecents(context, enabled)
+                        }
+                    )
+                    
+                    Divider(modifier = Modifier.padding(horizontal = 16.dp))
+                    
+                    // 流量统计
+                    SettingsSwitch(
+                        title = "Traffic statistics",
+                        subtitle = "Monitor real-time traffic speed (may cost CPU)",
+                        icon = Icons.Default.DataUsage,
+                        checked = trafficStatsEnabled,
+                        onCheckedChange = { enabled ->
+                            trafficStatsEnabled = enabled
+                            prefs.edit().putBoolean("traffic_stats_enabled", enabled).apply()
+                            TrafficStats.getInstance().setEnabled(enabled)
                         }
                     )
                 }
