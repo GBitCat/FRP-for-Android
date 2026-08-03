@@ -12,6 +12,8 @@ import androidx.room.PrimaryKey
 data class ServerConfig(
     @PrimaryKey
     var id: Int = 1,
+    // 配置区可修改的命名（仪表盘 Server 卡片显示用）
+    var name: String = "FRPS Server",
     var serverAddr: String = "",
     var serverPort: Int = 7000,
     var token: String = "",

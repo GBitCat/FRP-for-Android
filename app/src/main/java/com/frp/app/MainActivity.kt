@@ -211,7 +211,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "FRPS Server",
+                            text = serverConfig?.name?.ifBlank { "FRPS Server" } ?: "FRPS Server",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
@@ -619,8 +619,7 @@ fun ServerCard(
         FrpStatus.ERROR -> "Error"
         FrpStatus.STOPPED -> "Stopped"
     }
-    val displayAddr = serverConfig?.serverAddr ?: "Not set"
-    val displayPort = (serverConfig?.serverPort ?: 0).toString()
+    val displayName = serverConfig?.name?.ifBlank { "FRPS Server" } ?: "FRPS Server"
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -649,13 +648,8 @@ fun ServerCard(
                 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "FRPS Server",
+                        text = displayName,
                         style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = displayAddr + ":" + displayPort,
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 
@@ -745,6 +739,7 @@ fun ServerEditDialog(
     onDismiss: () -> Unit,
     onSave: (ServerConfig) -> Unit
 ) {
+    var name by remember { mutableStateOf((serverConfig?.name ?: "").ifBlank { "FRPS Server" }) }
     var addr by remember { mutableStateOf(serverConfig?.serverAddr ?: "") }
     var port by remember { mutableStateOf((serverConfig?.serverPort ?: 7000).toString()) }
     var token by remember { mutableStateOf(serverConfig?.token ?: "") }
@@ -764,6 +759,15 @@ fun ServerEditDialog(
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState())
             ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    placeholder = { Text("e.g., Home Server") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = addr,
                     onValueChange = { addr = it },
@@ -865,6 +869,7 @@ fun ServerEditDialog(
                 onClick = {
                     val newPort = port.toIntOrNull() ?: (serverConfig?.serverPort ?: 7000)
                     onSave(ServerConfig(
+                        name = name.trim().ifEmpty { "FRPS Server" },
                         serverAddr = addr.trim(),
                         serverPort = newPort,
                         token = token.trim(),
