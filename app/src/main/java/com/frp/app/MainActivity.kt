@@ -80,7 +80,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val serverConfig by viewModel.serverConfig.collectAsState(initial = null)
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val context = LocalContext.current
-    val configImportExport = remember { ConfigImportExport(context) }
     
     // Android 13+ 通知权限运行时请求（前台服务通知栏需要）
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -92,47 +91,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
     
-    // 导入配置的launcher
-    val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        result.data?.data?.let { uri ->
-            val json = configImportExport.readConfigFromUri(uri)
-            if (json != null) {
-                val importedConfigs = configImportExport.importConfigs(json)
-                if (importedConfigs != null) {
-                    importedConfigs.forEach { config ->
-                        viewModel.addConfig(config)
-                    }
-                    Toast.makeText(context, "Imported ${importedConfigs.size} configurations", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(context, "Failed to parse config file", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-    
-    // 导出配置的launcher - 使用SAF创建文档
-    var pendingExportJson by remember { mutableStateOf<String?>(null) }
-    val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        uri?.let {
-            pendingExportJson?.let { json ->
-                val success = configImportExport.writeConfigToUri(it, json)
-                if (success) {
-                    Toast.makeText(context, "Config exported successfully", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(context, "Failed to export config", Toast.LENGTH_SHORT).show()
-                }
-            }
-            pendingExportJson = null
-        }
-    }
-    
-    // 菜单状态
-    var showMenu by remember { mutableStateOf(false) }
-    
     // 底部导航当前页：0=仪表盘 1=配置 2=设置
     var selectedTab by remember { mutableStateOf(0) }
     
@@ -143,50 +101,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.primary
-                ),
-                actions = {
-                    // 日志按钮
-                    IconButton(
-                        onClick = {
-                            context.startActivity(Intent(context, LogActivity::class.java))
-                        }
-                    ) {
-                        Icon(Icons.Default.List, contentDescription = "Logs")
-                    }
-                    
-                    // 更多选项菜单
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More")
-                    }
-                    
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Import Config") },
-                            onClick = {
-                                showMenu = false
-                                importLauncher.launch(configImportExport.createImportIntent())
-                            },
-                            leadingIcon = { Icon(Icons.Default.FileUpload, contentDescription = null) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Export Config") },
-                            onClick = {
-                                showMenu = false
-                                if (configs.isNotEmpty()) {
-                                    val json = configImportExport.exportConfigs(configs)
-                                    pendingExportJson = json
-                                    exportLauncher.launch("frp_configs.json")
-                                } else {
-                                    Toast.makeText(context, "No configs to export", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) }
-                        )
-                    }
-                }
+                )
             )
         },
         floatingActionButton = {

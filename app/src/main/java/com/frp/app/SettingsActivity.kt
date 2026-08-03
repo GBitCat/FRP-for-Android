@@ -15,6 +15,12 @@ import androidx.compose.ui.Modifier
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
+import com.frp.app.data.ConfigImportExport
+import com.frp.app.viewmodel.MainViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.frp.app.ui.theme.FRPAndroidTheme
@@ -61,6 +67,47 @@ class SettingsActivity : ComponentActivity() {
 @Composable
 fun SettingsContent() {
     val context = LocalContext.current
+    val viewModel: MainViewModel = viewModel()
+    val configs by viewModel.allConfigs.collectAsState(initial = emptyList())
+    val configImportExport = remember { ConfigImportExport(context) }
+    
+    // 导入配置 launcher（SAF 文件选择）
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        result.data?.data?.let { uri ->
+            val json = configImportExport.readConfigFromUri(uri)
+            if (json != null) {
+                val importedConfigs = configImportExport.importConfigs(json)
+                if (importedConfigs != null) {
+                    importedConfigs.forEach { config ->
+                        viewModel.addConfig(config)
+                    }
+                    Toast.makeText(context, "Imported ${importedConfigs.size} configurations", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Failed to parse config file", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    
+    // 导出配置 launcher（SAF 创建文档）
+    var pendingExportJson by remember { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let {
+            pendingExportJson?.let { json ->
+                val success = configImportExport.writeConfigToUri(it, json)
+                if (success) {
+                    Toast.makeText(context, "Config exported successfully", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Failed to export config", Toast.LENGTH_SHORT).show()
+                }
+            }
+            pendingExportJson = null
+        }
+    }
     
     // 设置状态
     val prefs = context.getSharedPreferences("frp_settings", Context.MODE_PRIVATE)
@@ -174,6 +221,63 @@ fun SettingsContent() {
                         options = listOf("1", "3", "7", "14", "30"),
                         selectedOption = logRetention,
                         onOptionSelected = { logRetention = it }
+                    )
+                    
+                    Divider(modifier = Modifier.padding(horizontal = 16.dp))
+                    
+                    // 查看日志
+                    SettingsClickableItem(
+                        title = "View logs",
+                        subtitle = "Open frpc log viewer",
+                        icon = Icons.Default.List,
+                        onClick = {
+                            context.startActivity(Intent(context, LogActivity::class.java))
+                        }
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // 数据管理
+            Text(
+                text = "Data",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(16.dp)
+            )
+            
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Column {
+                    // 导入配置
+                    SettingsClickableItem(
+                        title = "Import Config",
+                        subtitle = "Import configurations from JSON file",
+                        icon = Icons.Default.FileUpload,
+                        onClick = {
+                            importLauncher.launch(configImportExport.createImportIntent())
+                        }
+                    )
+                    
+                    Divider(modifier = Modifier.padding(horizontal = 16.dp))
+                    
+                    // 导出配置
+                    SettingsClickableItem(
+                        title = "Export Config",
+                        subtitle = "Export all configurations to JSON file",
+                        icon = Icons.Default.FileDownload,
+                        onClick = {
+                            if (configs.isNotEmpty()) {
+                                pendingExportJson = configImportExport.exportConfigs(configs)
+                                exportLauncher.launch("frp_configs.json")
+                            } else {
+                                Toast.makeText(context, "No configs to export", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     )
                 }
             }
