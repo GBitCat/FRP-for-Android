@@ -22,6 +22,7 @@ import com.frp.app.manager.ConnectionType
 import com.frp.app.manager.FrpManager
 import com.frp.app.manager.LogLevel
 import com.frp.app.manager.LogManager
+import com.frp.app.manager.TrafficStats
 import kotlinx.coroutines.*
 
 class FrpService : Service() {
@@ -120,6 +121,9 @@ class FrpService : Service() {
                 
                 val configFile = configGenerator.saveAllConfigFile(server, enabledConfigs)
                 logManager.addLog(LogLevel.INFO, TAG, "Config file saved: ${configFile.absolutePath}")
+                
+                // 新会话：重置流量统计（总量/速度/连接数，基准随 UID 采样重新建立）
+                TrafficStats.getInstance().reset()
                 
                 frpManager.stopFrpc()  // 先停止现有进程
                 logManager.addLog(LogLevel.INFO, TAG, "Installing frpc binary...")

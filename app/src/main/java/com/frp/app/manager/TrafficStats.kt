@@ -6,10 +6,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.atomic.AtomicLong
 
-class TrafficStats {
+class TrafficStats private constructor() {
     
     companion object {
         private const val TAG = "TrafficStats"
+        
+        @Volatile
+        private var instance: TrafficStats? = null
+        
+        fun getInstance(): TrafficStats =
+            instance ?: synchronized(this) {
+                instance ?: TrafficStats().also { instance = it }
+            }
     }
     
     // 流量计数器
@@ -17,6 +25,13 @@ class TrafficStats {
     private val totalBytesReceived = AtomicLong(0)
     private val currentBytesSent = AtomicLong(0)
     private val currentBytesReceived = AtomicLong(0)
+    
+    // UID 流量采样基准（上次采样值）
+    private var lastSampleRx = -1L
+    private var lastSampleTx = -1L
+    
+    // 连接统计峰值
+    private var peakConnections = 0
     
     // 连接统计
     private val _activeConnections = MutableStateFlow(0)
@@ -95,6 +110,47 @@ class TrafficStats {
         lastUpdateTime = currentTime
     }
     
+    /**
+     * 采样 app UID 的累计网络流量（TrafficStats API，含 frpc 进程），
+     * 与上次采样的差值喂入统计（驱动速度与总量）。每秒调用一次。
+     */
+    fun sampleUidTraffic(uid: Int) {
+        val rx = android.net.TrafficStats.getUidRxBytes(uid)
+        val tx = android.net.TrafficStats.getUidTxBytes(uid)
+        if (rx > 0 && lastSampleRx >= 0 && rx >= lastSampleRx) {
+            recordReceived(rx - lastSampleRx)
+        }
+        if (tx > 0 && lastSampleTx >= 0 && tx >= lastSampleTx) {
+            recordSent(tx - lastSampleTx)
+        }
+        lastSampleRx = rx
+        lastSampleTx = tx
+    }
+    
+    /**
+     * 解析 /proc/net/tcp{,6} 统计当前 uid 的 ESTABLISHED TCP 连接数（实时活跃隧道数）。
+     */
+    fun sampleTcpConnections(uid: Int) {
+        var count = 0
+        for (path in listOf("/proc/net/tcp", "/proc/net/tcp6")) {
+            try {
+                val lines = java.io.File(path).readLines()
+                for (line in lines.drop(1)) {
+                    // sl local_address rem_address st tx_queue ... uid ...
+                    val parts = line.trim().split(Regex("\\s+"))
+                    if (parts.size >= 8 && parts[3] == "01" && parts[7].toIntOrNull() == uid) {
+                        count++
+                    }
+                }
+            } catch (_: Exception) {
+                // 某些设备可能禁止读取
+            }
+        }
+        _activeConnections.value = count
+        if (count > peakConnections) peakConnections = count
+        _totalConnections.value = peakConnections
+    }
+    
     // 重置统计
     fun reset() {
         totalBytesSent.set(0)
@@ -103,6 +159,9 @@ class TrafficStats {
         currentBytesReceived.set(0)
         _activeConnections.value = 0
         _totalConnections.value = 0
+        peakConnections = 0
+        lastSampleRx = -1
+        lastSampleTx = -1
         lastUpdateTime = System.currentTimeMillis()
         updateState()
     }
