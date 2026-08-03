@@ -1,6 +1,7 @@
 package com.frp.app
 
 import android.os.Bundle
+import android.os.Process
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -16,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.frp.app.manager.TrafficState
 import com.frp.app.manager.TrafficStats
+import kotlinx.coroutines.delay
 import com.frp.app.ui.theme.FRPAndroidTheme
 
 class TrafficActivity : ComponentActivity() {
@@ -39,8 +41,18 @@ class TrafficActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TrafficScreen(onBack: () -> Unit) {
-    val trafficStats = remember { TrafficStats() }
+    val trafficStats = remember { TrafficStats.getInstance() }
     val trafficState by trafficStats.trafficState.collectAsState()
+    
+    // 每秒采样 app UID 流量与 TCP 连接数
+    LaunchedEffect(Unit) {
+        val uid = Process.myUid()
+        while (true) {
+            trafficStats.sampleUidTraffic(uid)
+            trafficStats.sampleTcpConnections(uid)
+            delay(1000)
+        }
+    }
     
     Scaffold(
         topBar = {
@@ -241,10 +253,10 @@ fun TrafficScreen(onBack: () -> Unit) {
                             )
                         }
                         
-                        // 总连接数
+                        // 峰值连接数
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = "Total Connections",
+                                text = "Peak Connections",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -277,9 +289,9 @@ fun TrafficScreen(onBack: () -> Unit) {
                     )
                     Text(
                         text = "• Real-time speed is updated every second\n" +
-                                "• Total traffic includes all data transferred\n" +
-                                "• Connection count shows active FRP tunnels\n" +
-                                "• Statistics reset when FRP service restarts",
+                                "• Traffic counts all app network data (frpc included)\n" +
+                                "• Active connections = live TCP tunnels of this app\n" +
+                                "• Statistics reset on FRP restart or manual reset",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
