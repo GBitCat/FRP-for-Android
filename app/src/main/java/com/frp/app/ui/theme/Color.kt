@@ -2,12 +2,12 @@ package com.frp.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// FRP主题颜色
-val FRPPrimary = Color(0xFF1E88E5)      // 蓝色
-val FRPPrimaryVariant = Color(0xFF1565C0)
-val FRPSecondary = Color(0xFF43A047)    // 绿色
-val FRPSecondaryVariant = Color(0xFF2E7D32)
-val FRPTertiary = Color(0xFFFF8F00)     // 橙色
+// FRP主题颜色（参考 FlClash 默认主色 #D8C0C3 玫瑰粉系）
+val FRPPrimary = Color(0xFFD8C0C3)      // 玫瑰粉
+val FRPPrimaryVariant = Color(0xFFA9898E)
+val FRPSecondary = Color(0xFF8C6E73)    // 灰粉
+val FRPSecondaryVariant = Color(0xFF6E5459)
+val FRPTertiary = Color(0xFF9C7A6B)     // 棕粉
 
 // 状态颜色
 val StatusRunning = Color(0xFF4CAF50)   // 运行中 - 绿色
@@ -26,15 +26,15 @@ val LogWarn = Color(0xFFFF9800)         // Warn - 橙色
 val LogError = Color(0xFFF44336)        // Error - 红色
 
 // 深色主题
-val DarkPrimary = Color(0xFF64B5F6)
-val DarkPrimaryVariant = Color(0xFF42A5F5)
-val DarkSecondary = Color(0xFF81C784)
-val DarkSecondaryVariant = Color(0xFF66BB6A)
-val DarkTertiary = Color(0xFFFFB74D)
+val DarkPrimary = Color(0xFFE4CDD0)
+val DarkPrimaryVariant = Color(0xFFB99CA0)
+val DarkSecondary = Color(0xFFB79A9F)
+val DarkSecondaryVariant = Color(0xFF93787D)
+val DarkTertiary = Color(0xFFC6A292)
 
 // 浅色主题
-val LightPrimary = Color(0xFF1E88E5)
-val LightPrimaryVariant = Color(0xFF1565C0)
-val LightSecondary = Color(0xFF43A047)
-val LightSecondaryVariant = Color(0xFF2E7D32)
-val LightTertiary = Color(0xFFFF8F00)
+val LightPrimary = Color(0xFFD8C0C3)
+val LightPrimaryVariant = Color(0xFFA9898E)
+val LightSecondary = Color(0xFF8C6E73)
+val LightSecondaryVariant = Color(0xFF6E5459)
+val LightTertiary = Color(0xFF9C7A6B)
