@@ -159,7 +159,6 @@ class ConfigGenerator(private val context: Context) {
             }
         }
     }
-    }
 
     fun createLinkedStcpConfig(xtcpConfig: FrpConfig): FrpConfig {
         val stcpName = "${xtcpConfig.name}-stcp"
@@ -176,6 +175,7 @@ class ConfigGenerator(private val context: Context) {
             useEncryption = xtcpConfig.useEncryption,
             useCompression = xtcpConfig.useCompression
         )
+    }
     }
 
     /**

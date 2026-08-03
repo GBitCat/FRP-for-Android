@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.frp.app.data.AppDatabase
 import com.frp.app.data.FrpConfig
+import com.frp.app.data.ConfigGenerator
 import com.frp.app.data.FrpConfigRepository
 import com.frp.app.data.FrpStatus
 import com.frp.app.data.FrpStatusHolder
@@ -34,6 +35,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val frpManager = FrpManager(application)
     private val connectionStatusParser = ConnectionStatusParser.getInstance()
     val connectionStatus = connectionStatusParser.status
+    // 每个应用（visitor）各自的连接状态
+    val appStatuses = connectionStatusParser.appStatuses
     
     val allConfigs = repository.allConfigs
     
@@ -149,6 +152,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateConfig(config: FrpConfig) {
         viewModelScope.launch {
             repository.updateConfig(config)
+        }
+    }
+    
+    /**
+     * 主配置（XTCP）保存后，联动同步 linked STCP 子配置：
+     * serverName / secretKey / 加密压缩 与预览推导逻辑（createLinkedStcpConfig）保持一致，
+     * 避免"预览正确、实际生成文件不一致"。
+     */
+    fun syncLinkedStcp(primary: FrpConfig) {
+        viewModelScope.launch {
+            if (!primary.useFallback || primary.fallbackTo.isBlank()) return@launch
+            val all = repository.getAllConfigsSync()
+            val linked = all.find { it.name == primary.fallbackTo && it.protocol == "stcp" }
+                ?: return@launch
+            val derived = ConfigGenerator.createLinkedStcpConfig(primary)
+            if (linked.serverName != derived.serverName ||
+                linked.secretKey != derived.secretKey ||
+                linked.useEncryption != derived.useEncryption ||
+                linked.useCompression != derived.useCompression
+            ) {
+                repository.updateConfig(
+                    linked.copy(
+                        serverName = derived.serverName,
+                        secretKey = derived.secretKey,
+                        useEncryption = derived.useEncryption,
+                        useCompression = derived.useCompression
+                    )
+                )
+            }
         }
     }
     

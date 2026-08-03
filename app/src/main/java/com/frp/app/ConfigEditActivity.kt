@@ -197,6 +197,10 @@ fun ConfigEditScreen(
                             
                             if (isEditing) {
                                 viewModel.updateConfig(config)
+                                // 主配置保存后联动同步 linked STCP，保证生成文件与预览一致
+                                if (config.isVisitor() && config.supportsFallback()) {
+                                    viewModel.syncLinkedStcp(config)
+                                }
                                 Toast.makeText(context, "Configuration updated", Toast.LENGTH_SHORT).show()
                                 onSave()
                             } else {
@@ -742,7 +746,7 @@ fun ConfigEditScreen(
                                 useEncryption = useEncryption,
                                 useCompression = useCompression
                             )
-                            configGenerator.createLinkedStcpConfig(xtcpPreview)
+                            ConfigGenerator.createLinkedStcpConfig(xtcpPreview)
                         }
                     } else null
                     
@@ -831,7 +835,7 @@ fun ConfigEditScreen(
                                 isGroupPrimary = false
                             )
                         } else {
-                            configGenerator.createLinkedStcpConfig(pendingSaveConfig!!).copy(
+                            ConfigGenerator.createLinkedStcpConfig(pendingSaveConfig!!).copy(
                                 groupId = groupId,
                                 groupName = finalGroupName,
                                 isGroupPrimary = false
