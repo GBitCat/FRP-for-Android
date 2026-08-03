@@ -47,35 +47,6 @@ class TrafficStats private constructor() {
     // 上次更新时间
     private var lastUpdateTime = System.currentTimeMillis()
     
-    // 记录发送流量
-    fun recordSent(bytes: Long) {
-        totalBytesSent.addAndGet(bytes)
-        currentBytesSent.addAndGet(bytes)
-        updateState()
-    }
-    
-    // 记录接收流量
-    fun recordReceived(bytes: Long) {
-        totalBytesReceived.addAndGet(bytes)
-        currentBytesReceived.addAndGet(bytes)
-        updateState()
-    }
-    
-    // 增加活跃连接数
-    fun incrementConnections() {
-        _activeConnections.value++
-        _totalConnections.value++
-        updateState()
-    }
-    
-    // 减少活跃连接数
-    fun decrementConnections() {
-        if (_activeConnections.value > 0) {
-            _activeConnections.value--
-        }
-        updateState()
-    }
-    
     // 更新状态
     private fun updateState() {
         val currentTime = System.currentTimeMillis()
@@ -118,13 +89,17 @@ class TrafficStats private constructor() {
         val rx = android.net.TrafficStats.getUidRxBytes(uid)
         val tx = android.net.TrafficStats.getUidTxBytes(uid)
         if (rx > 0 && lastSampleRx >= 0 && rx >= lastSampleRx) {
-            recordReceived(rx - lastSampleRx)
+            totalBytesReceived.addAndGet(rx - lastSampleRx)
+            currentBytesReceived.addAndGet(rx - lastSampleRx)
         }
         if (tx > 0 && lastSampleTx >= 0 && tx >= lastSampleTx) {
-            recordSent(tx - lastSampleTx)
+            totalBytesSent.addAndGet(tx - lastSampleTx)
+            currentBytesSent.addAndGet(tx - lastSampleTx)
         }
         lastSampleRx = rx
         lastSampleTx = tx
+        // 总是刷新状态：有流量时计算速度，空闲时自动归零，保证实时更新
+        updateState()
     }
     
     /**
