@@ -167,13 +167,20 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             
             Spacer(modifier = Modifier.height(12.dp))
             
-            // IP地址卡片
-            IpAddressCard()
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // 内存占用卡片
-            MemoryCard()
+            // IP 与内存卡片并排（各占一半，强制等高）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    IpAddressCard()
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    MemoryCard()
+                }
+            }
             
             Spacer(modifier = Modifier.height(12.dp))
             
@@ -332,7 +339,9 @@ fun MemoryCard() {
     val heapPercent = if (heapMaxMb > 0) heapUsedMb / heapMaxMb else 0f
     
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
@@ -363,15 +372,15 @@ fun MemoryCard() {
             ) {
                 Text(
                     text = "${pssMb.toInt()} MB",
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = "PSS",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp)
+                    modifier = Modifier.padding(bottom = 2.dp)
                 )
             }
             
@@ -380,11 +389,11 @@ fun MemoryCard() {
                 modifier = Modifier.fillMaxWidth()
             )
             
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             
             Text(
-                text = "Heap: ${String.format("%.1f", heapUsedMb)} / ${String.format("%.1f", heapMaxMb)} MB (${(heapPercent * 100).toInt()}%)",
-                style = MaterialTheme.typography.bodySmall,
+                text = "Heap ${(heapPercent * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -498,7 +507,9 @@ fun IpAddressCard() {
     val ipAddresses = remember { NetworkUtils.getDeviceIpAddresses(context) }
     
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
@@ -538,7 +549,7 @@ fun IpAddressCard() {
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(bottom = 2.dp)
                     )
-                    ipAddresses.ipv4.take(2).forEach { ip ->
+                    ipAddresses.ipv4.take(1).forEach { ip ->
                         Text(
                             text = ip,
                             style = MaterialTheme.typography.bodySmall.copy(
@@ -559,7 +570,7 @@ fun IpAddressCard() {
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.padding(bottom = 2.dp)
                     )
-                    ipAddresses.ipv6.take(2).forEach { ip ->
+                    ipAddresses.ipv6.take(1).forEach { ip ->
                         Text(
                             text = ip,
                             style = MaterialTheme.typography.bodySmall.copy(
