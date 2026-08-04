@@ -213,6 +213,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     
+    // 分组重命名：同步组内全部配置
+    fun updateGroupName(groupId: Long, name: String) {
+        viewModelScope.launch {
+            repository.updateGroupName(groupId, name)
+        }
+    }
+    
     // 单个配置启用开关
     fun setConfigEnabled(configId: Long, enabled: Boolean) {
         viewModelScope.launch {

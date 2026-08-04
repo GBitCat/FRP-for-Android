@@ -57,6 +57,9 @@ interface FrpConfigDao {
     @Query("UPDATE frp_configs SET enabled = :enabled WHERE groupId = :groupId")
     fun updateGroupEnabled(groupId: Long, enabled: Boolean)
     
+    @Query("UPDATE frp_configs SET groupName = :name WHERE groupId = :groupId")
+    fun updateGroupName(groupId: Long, name: String)
+    
     @Query("SELECT * FROM frp_configs WHERE running = 1 LIMIT 1")
     fun getRunningConfig(): FrpConfig?
 }
