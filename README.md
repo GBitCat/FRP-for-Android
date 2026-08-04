@@ -68,8 +68,6 @@ cd FRP-M
 
 2. **下载frpc二进制文件**
 ```bash
-export http_proxy=http://127.0.0.1:7892
-export https_proxy=http://127.0.0.1:7892
 ./scripts/download_frpc.sh
 ```
 
