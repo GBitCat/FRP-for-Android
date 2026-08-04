@@ -16,9 +16,9 @@ object FrpStatusHolder {
     val status: StateFlow<FrpStatus> = _status.asStateFlow()
 
     fun init(context: Context) {
-        val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, FrpStatus.STOPPED.name)
-        _status.value = runCatching { FrpStatus.valueOf(saved!!) }.getOrDefault(FrpStatus.STOPPED)
+        // 新进程启动时 frpc 必然未运行：若服务仍存活，其 onStartCommand 会重新置 RUNNING。
+        // 不再从 prefs 恢复 RUNNING，避免"结束 app 后开关残留开启"（prefs 可能残留上次状态）。
+        _status.value = FrpStatus.STOPPED
     }
 
     fun set(context: Context, status: FrpStatus) {

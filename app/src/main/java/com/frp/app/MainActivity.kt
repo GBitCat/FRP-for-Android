@@ -426,7 +426,15 @@ fun AppConnectionCard(
     configs: List<FrpConfig>
 ) {
     // 构建显示行：有分组的按应用聚合，无分组的单条显示
-    data class AppRow(val name: String, val protocols: String, val status: ConnectionStatus)
+    data class AppRow(val name: String, val label: String, val status: ConnectionStatus)
+    
+    // 按当前连接方式显示：XTCP 连上→XTCP、STCP 回落→STCP、未连接→未连接、错误→Error
+    fun connectionLabel(status: ConnectionStatus): String = when (status.type) {
+        ConnectionType.P2P -> "XTCP"
+        ConnectionType.RELAY -> "STCP"
+        ConnectionType.ERROR -> "Error"
+        else -> "未连接"
+    }
     
     val rows = remember(configs, appStatuses) {
         val rows = mutableListOf<AppRow>()
@@ -436,7 +444,6 @@ fun AppConnectionCard(
             .forEach { (_, groupConfigs) ->
                 val primary = groupConfigs.find { it.isGroupPrimary } ?: groupConfigs.first()
                 val name = primary.groupName.ifBlank { primary.name }
-                val protocols = groupConfigs.map { it.protocol.uppercase() }.distinct().joinToString("·")
                 val statuses = groupConfigs.mapNotNull { appStatuses[it.name] }
                 val status = when {
                     statuses.any { it.type == ConnectionType.ERROR } -> ConnectionStatus(ConnectionType.ERROR, "Error")
@@ -445,14 +452,14 @@ fun AppConnectionCard(
                     statuses.isNotEmpty() -> ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
                     else -> ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
                 }
-                rows.add(AppRow(name, protocols, status))
+                rows.add(AppRow(name, connectionLabel(status), status))
             }
         // 无分组配置：单条显示
         configs.filter { !it.isInGroup() }.forEach { config ->
             rows.add(
                 AppRow(
                     name = config.name,
-                    protocols = config.protocol.uppercase(),
+                    label = connectionLabel(appStatuses[config.name] ?: ConnectionStatus()),
                     status = appStatuses[config.name]
                         ?: ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
                 )
@@ -529,7 +536,7 @@ fun AppConnectionCard(
                             }
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = row.protocols,
+                                text = row.label,
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                                 ),
