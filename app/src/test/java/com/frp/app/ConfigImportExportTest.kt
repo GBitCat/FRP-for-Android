@@ -1,5 +1,6 @@
 package com.frp.app
 
+import com.frp.app.data.ConfigImportExport
 import com.frp.app.data.ExportData
 import com.frp.app.data.FrpConfig
 import com.frp.app.data.ServerConfig
@@ -41,5 +42,34 @@ class ConfigImportExportTest {
         assertTrue(data.server?.serverId == "ZZZZ9999")
         assertTrue(data.configs.size == 1)
         assertTrue(data.configs[0].name == "cfg1")
+    }
+}
+
+
+class ZipExportTest {
+
+    @Test
+    fun `zip contains json and toml entries`() {
+        val server = ServerConfig(name = "Home", serverAddr = "1.2.3.4", serverPort = 7000, serverId = "ABCD1234")
+        val configs = listOf(FrpConfig(name = "xtcp_visitor", localPort = 0, protocol = "xtcp", bindPort = 39522))
+        val toml = "serverAddr = \"1.2.3.4\"\n\n[[visitors]]\nname = \"xtcp_visitor\"\n"
+
+        val zip = ConfigImportExport.buildExportZip(configs, server, toml)
+        assertTrue("zip should start with PK", zip[0] == 'P'.code.toByte() && zip[1] == 'K'.code.toByte())
+
+        val imported = ConfigImportExport.parseImportBytes(zip)
+        assertTrue(imported != null)
+        assertTrue(imported?.server?.serverAddr == "1.2.3.4")
+        assertTrue(imported?.server?.serverId == "ABCD1234")
+        assertTrue(imported?.configs?.size == 1)
+        assertTrue(imported?.configs?.get(0)?.name == "xtcp_visitor")
+    }
+
+    @Test
+    fun `plain json import still works`() {
+        val json = """{"version":1,"server":{"serverAddr":"5.6.7.8","serverId":"ZZZZ"},"configs":[{"name":"a","localPort":22}]}"""
+        val data = ConfigImportExport.parseImportBytes(json.toByteArray())
+        assertTrue(data?.server?.serverAddr == "5.6.7.8")
+        assertTrue(data?.configs?.size == 1)
     }
 }
