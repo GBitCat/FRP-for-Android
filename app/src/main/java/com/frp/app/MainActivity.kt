@@ -950,6 +950,8 @@ fun ServerEditDialog(
     onSave: (ServerConfig) -> Unit
 ) {
     var name by remember { mutableStateOf((serverConfig?.name ?: "").ifBlank { "FRPS Server" }) }
+    var serverId by remember { mutableStateOf(serverConfig?.serverId ?: "") }
+    var showResetIdDialog by remember { mutableStateOf(false) }
     var addr by remember { mutableStateOf(serverConfig?.serverAddr ?: "") }
     var port by remember { mutableStateOf((serverConfig?.serverPort ?: 7000).toString()) }
     var token by remember { mutableStateOf(serverConfig?.token ?: "") }
@@ -977,6 +979,29 @@ fun ServerEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Server ID 展示 + 重置
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Server ID",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = serverId.ifBlank { "Not set" },
+                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+                        )
+                    }
+                    TextButton(onClick = { showResetIdDialog = true }) {
+                        Text("Reset ID")
+                    }
+                }
+                
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = addr,
@@ -1080,6 +1105,7 @@ fun ServerEditDialog(
                     val newPort = port.toIntOrNull() ?: (serverConfig?.serverPort ?: 7000)
                     onSave(ServerConfig(
                         name = name.trim().ifEmpty { "FRPS Server" },
+                        serverId = serverId,
                         serverAddr = addr.trim(),
                         serverPort = newPort,
                         token = token.trim(),
@@ -1100,6 +1126,32 @@ fun ServerEditDialog(
             }
         }
     )
+
+    // 重置 Server ID 警告
+    if (showResetIdDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetIdDialog = false },
+            title = { Text("Reset Server ID") },
+            text = {
+                Text("确定重置 Server ID 吗？将生成新的 8 位 ID，已有应用配置的归属将同步更新到新 ID。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        serverId = ServerConfig.generateId()
+                        showResetIdDialog = false
+                    }
+                ) {
+                    Text("Reset", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetIdDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

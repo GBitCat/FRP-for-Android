@@ -29,4 +29,12 @@ data class ServerConfig(
     var tcpMuxKeepaliveInterval: Int = 30    // TCP 多路复用保活间隔（秒）
 ) {
     fun isValid(): Boolean = serverAddr.isNotBlank() && serverPort in 1..65535
+    
+    companion object {
+        /** 生成 8 位字母数字 Server ID */
+        fun generateId(): String {
+            val chars = ('A'..'Z') + ('0'..'9')
+            return (1..8).map { chars.random() }.joinToString("")
+        }
+    }
 }

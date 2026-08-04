@@ -41,10 +41,7 @@ class FrpConfigRepository(
     }
     
     /** 生成 8 位字母数字 Server ID（仅用于应用归属标识） */
-    private fun generateServerId(): String {
-        val chars = ('A'..'Z') + ('0'..'9')
-        return (1..8).map { chars.random() }.joinToString("")
-    }
+    private fun generateServerId(): String = ServerConfig.generateId()
     
     suspend fun getAllConfigsSync(): List<FrpConfig> {
         return withContext(Dispatchers.IO) {
