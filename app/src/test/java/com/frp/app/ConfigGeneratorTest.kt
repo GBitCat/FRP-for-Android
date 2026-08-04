@@ -135,4 +135,20 @@ class ConfigGeneratorTest {
         assertTrue(out.contains("transport.heartbeatTimeout = 120"))
         assertTrue(out.contains("transport.tcpMuxKeepaliveInterval = 60"))
     }
+
+    @Test
+    fun `createLinkedStcpConfig strips xtcp naming rule suffix`() {
+        val xtcp = xtcpVisitor().copy(name = "linux-ssh-xtcp", serverName = "linux-ssh-xtcp")
+        val stcp = ConfigGenerator.createLinkedStcpConfig(xtcp)
+        assertEquals("linux-ssh-stcp", stcp.name)
+        assertEquals("linux-ssh-stcp", stcp.serverName)
+        assertEquals(-1, stcp.bindPort)
+    }
+
+    @Test
+    fun `createLinkedStcpConfig keeps plain names unchanged`() {
+        val stcp = ConfigGenerator.createLinkedStcpConfig(xtcpVisitor())
+        assertEquals("xtcp_visitor-stcp", stcp.name)
+        assertEquals("stcp_ssh", stcp.serverName)
+    }
 }
