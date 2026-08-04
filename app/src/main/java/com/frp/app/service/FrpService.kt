@@ -306,6 +306,9 @@ class FrpService : Service() {
         super.onDestroy()
         frpManager.cleanup()
         serviceScope.cancel()
+        // 服务销毁时复位运行状态与连接状态，避免 UI 残留"运行中"显示
+        FrpStatusHolder.set(this, FrpStatus.STOPPED)
+        ConnectionStatusParser.getInstance().reset()
         logManager.addLog(LogLevel.INFO, TAG, "Service destroyed")
     }
 }
