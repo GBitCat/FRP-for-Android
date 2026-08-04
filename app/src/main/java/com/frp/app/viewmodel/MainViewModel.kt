@@ -37,6 +37,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val connectionStatus = connectionStatusParser.status
     // 每个应用（visitor）各自的连接状态
     val appStatuses = connectionStatusParser.appStatuses
+    // 服务端连接状态（frpc ↔ frps）
+    val serverStatus = connectionStatusParser.serverStatus
     
     val allConfigs = repository.allConfigs
     

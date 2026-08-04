@@ -85,6 +85,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val serverConfig by viewModel.serverConfig.collectAsState(initial = null)
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val appStatuses by viewModel.appStatuses.collectAsState()
+    val serverStatus by viewModel.serverStatus.collectAsState()
     val context = LocalContext.current
     
     // Android 13+ 通知权限运行时请求（前台服务通知栏需要）
@@ -167,6 +168,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 frpStatus = frpStatus,
                 connectionStatus = connectionStatus,
                 activeConfig = configs.find { it.id == activeConfigId },
+                serverStatus = serverStatus,
                 onStart = { viewModel.startAll() },
                 onStop = { viewModel.stopFrp() }
             )
@@ -519,7 +521,7 @@ fun AppConnectionCard(
                                 ConnectionType.P2P -> Color(0xFF4CAF50)
                                 ConnectionType.RELAY -> Color(0xFFFF9800)
                                 ConnectionType.ERROR -> Color(0xFFF44336)
-                                ConnectionType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                ConnectionType.CONNECTED, ConnectionType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                             }
                             // 协议标签（XTCP/STCP/...），颜色反映连接状态
                             Canvas(modifier = Modifier.size(8.dp)) {
@@ -766,6 +768,7 @@ fun ServerCard(
     isRunning: Boolean,
     frpStatus: FrpStatus,
     connectionStatus: ConnectionStatus,
+    serverStatus: ConnectionStatus,
     activeConfig: FrpConfig?,
     onStart: () -> Unit,
     onStop: () -> Unit
@@ -840,26 +843,23 @@ fun ServerCard(
                 )
             }
             
-            // 连接方式：未启动时显示无连接
+            // 服务端连接状态监测（frpc ↔ frps）
             Spacer(modifier = Modifier.height(8.dp))
             val connColor = when {
                 !isRunning -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                connectionStatus.type == ConnectionType.P2P -> Color(0xFF4CAF50)
-                connectionStatus.type == ConnectionType.RELAY -> Color(0xFFFF9800)
-                connectionStatus.type == ConnectionType.ERROR -> MaterialTheme.colorScheme.error
+                serverStatus.type == ConnectionType.CONNECTED -> Color(0xFF4CAF50)
+                serverStatus.type == ConnectionType.ERROR -> MaterialTheme.colorScheme.error
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             val connIcon = when {
                 !isRunning -> Icons.Default.HelpOutline
-                connectionStatus.type == ConnectionType.P2P -> Icons.Default.Link
-                connectionStatus.type == ConnectionType.RELAY -> Icons.Default.SwapHoriz
-                connectionStatus.type == ConnectionType.ERROR -> Icons.Default.ErrorOutline
+                serverStatus.type == ConnectionType.CONNECTED -> Icons.Default.CloudDone
+                serverStatus.type == ConnectionType.ERROR -> Icons.Default.ErrorOutline
                 else -> Icons.Default.HelpOutline
             }
             val connText = when {
                 !isRunning -> "No connection"
-                connectionStatus.type == ConnectionType.UNKNOWN -> "Connecting..."
-                else -> connectionStatus.detail
+                else -> serverStatus.detail
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,

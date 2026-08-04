@@ -217,6 +217,7 @@ class FrpService : Service() {
                         ConnectionType.P2P -> "P2P Direct"
                         ConnectionType.RELAY -> "Relay (STCP)"
                         ConnectionType.ERROR -> status.detail
+                        ConnectionType.CONNECTED -> "Connected to server"
                         ConnectionType.UNKNOWN -> ""
                     }
                     updateNotificationWithSubtitle("", subtitle)
@@ -236,6 +237,7 @@ class FrpService : Service() {
             frpStatus == FrpStatus.ERROR -> 0xFFF44336.toInt()
             connType == ConnectionType.P2P -> 0xFF4CAF50.toInt()
             connType == ConnectionType.RELAY -> 0xFFFF9800.toInt()
+            connType == ConnectionType.CONNECTED -> 0xFF2196F3.toInt()
             else -> 0xFF9E9E9E.toInt()
         }
     }
