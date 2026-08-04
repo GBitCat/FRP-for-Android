@@ -18,20 +18,37 @@ class ConfigImportExport(private val context: Context) {
     
     private val gson = Gson()
     
-    // 导出配置到JSON
-    fun exportConfigs(configs: List<FrpConfig>): String {
-        return gson.toJson(configs)
+    // 导出配置到JSON（包含 Server 配置）
+    fun exportAll(configs: List<FrpConfig>, server: ServerConfig?): String {
+        return gson.toJson(ExportData(configs = configs, server = server))
     }
     
-    // 从JSON导入配置
-    fun importConfigs(json: String): List<FrpConfig>? {
+    // 从JSON导入配置（兼容新格式 ExportData 与旧格式 List<FrpConfig>）
+    fun importAll(json: String): ExportData? {
         return try {
-            val type = object : TypeToken<List<FrpConfig>>() {}.type
-            gson.fromJson(json, type)
+            val trimmed = json.trim()
+            if (trimmed.startsWith("{")) {
+                gson.fromJson(trimmed, ExportData::class.java)
+            } else {
+                // 旧格式：纯配置列表
+                val type = object : TypeToken<List<FrpConfig>>() {}.type
+                val configs = gson.fromJson<List<FrpConfig>>(trimmed, type)
+                ExportData(configs = configs ?: emptyList())
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error importing configs", e)
             null
         }
+    }
+    
+    // 导出配置到JSON（旧接口，仅配置列表）
+    fun exportConfigs(configs: List<FrpConfig>): String {
+        return gson.toJson(configs)
+    }
+    
+    // 从JSON导入配置（旧接口）
+    fun importConfigs(json: String): List<FrpConfig>? {
+        return importAll(json)?.configs
     }
     
     // 从URI读取配置
@@ -168,3 +185,11 @@ class ConfigImportExport(private val context: Context) {
         }
     }
 }
+
+
+/** 导出数据：Server 配置 + 应用配置列表（version 用于未来格式兼容） */
+data class ExportData(
+    val version: Int = 1,
+    val server: ServerConfig? = null,
+    val configs: List<FrpConfig> = emptyList()
+)
