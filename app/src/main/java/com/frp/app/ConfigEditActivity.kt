@@ -60,6 +60,7 @@ fun ConfigEditScreen(
     val configGenerator = remember { ConfigGenerator(context) }
     val isEditing = configId != null
     val serverConfig by viewModel.serverConfig.collectAsState(initial = null)
+    var serverDropdownExpanded by remember { mutableStateOf(false) }
     
     // 表单状态
     var name by remember { mutableStateOf("") }
@@ -75,6 +76,7 @@ fun ConfigEditScreen(
     var bindPort by remember { mutableStateOf("9002") }
     var bindAddr by remember { mutableStateOf("127.0.0.1") }
     var showSecretKey by remember { mutableStateOf(false) }
+    var serverId by remember { mutableStateOf("") }
     
     // 传输加密/压缩（需与对端 frpc 配置一致）
     var useEncryption by remember { mutableStateOf(false) }
@@ -113,6 +115,7 @@ fun ConfigEditScreen(
                 serverName = config.serverName ?: ""
                 bindPort = config.bindPort.toString()
                 bindAddr = config.bindAddr
+                serverId = config.serverId
                 useEncryption = config.useEncryption
                 useCompression = config.useCompression
                 android.util.Log.d("ConfigEdit", "Loading - useFallback: ${config.useFallback}, fallbackTo: ${config.fallbackTo}")
@@ -176,6 +179,7 @@ fun ConfigEditScreen(
                                 bindAddr = bindAddr,
                                 useEncryption = useEncryption,
                                 useCompression = useCompression,
+                                serverId = serverId.ifEmpty { serverConfig?.serverId ?: "" },
                                 useFallback = useFallback,
                                 fallbackTo = if (useFallback) {
                                     if (useCustomStcp) stcpName.ifBlank { autoStcpName } else autoStcpName
@@ -315,6 +319,37 @@ fun ConfigEditScreen(
             }
             
             Spacer(modifier = Modifier.height(16.dp))
+            
+            // 隶属 Server 选择（serverId 仅用于归属标识，不参与 TOML）
+            ExposedDropdownMenuBox(
+                expanded = serverDropdownExpanded,
+                onExpandedChange = { serverDropdownExpanded = it }
+            ) {
+                OutlinedTextField(
+                    value = serverConfig?.let { "${it.name} (${it.serverId})" } ?: "No server configured",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Belongs to Server") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = serverDropdownExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = serverDropdownExpanded,
+                    onDismissRequest = { serverDropdownExpanded = false }
+                ) {
+                    serverConfig?.let { server ->
+                        DropdownMenuItem(
+                            text = { Text("${server.name} (${server.serverId})") },
+                            onClick = {
+                                serverId = server.serverId
+                                serverDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
             
             // STCP/XTCP 特有配置
             AnimatedVisibility(visible = isSecretProtocol) {

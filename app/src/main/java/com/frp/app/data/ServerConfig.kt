@@ -14,6 +14,8 @@ data class ServerConfig(
     var id: Int = 1,
     // 配置区可修改的命名（仪表盘 Server 卡片显示用）
     var name: String = "FRPS Server",
+    // 8 位 Server ID（仅用于应用配置归属标识，不参与 TOML 生成）
+    var serverId: String = "",
     var serverAddr: String = "",
     var serverPort: Int = 7000,
     var token: String = "",

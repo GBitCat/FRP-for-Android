@@ -24,8 +24,19 @@ class FrpConfigRepository(
     
     suspend fun saveServerConfig(config: ServerConfig) {
         withContext(Dispatchers.IO) {
-            serverConfigDao.saveServerConfig(config.copy(updatedAt = System.currentTimeMillis()))
+            val withId = if (config.serverId.isBlank()) {
+                config.copy(serverId = generateServerId())
+            } else {
+                config
+            }
+            serverConfigDao.saveServerConfig(withId.copy(updatedAt = System.currentTimeMillis()))
         }
+    }
+    
+    /** 生成 8 位字母数字 Server ID（仅用于应用归属标识） */
+    private fun generateServerId(): String {
+        val chars = ('A'..'Z') + ('0'..'9')
+        return (1..8).map { chars.random() }.joinToString("")
     }
     
     suspend fun getAllConfigsSync(): List<FrpConfig> {
