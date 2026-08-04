@@ -240,15 +240,36 @@ fun ConfigEditScreen(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
             
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Configuration Name *") },
-                placeholder = { Text("e.g., xtcp-visitor") },
-                modifier = Modifier.fillMaxWidth()
-            )
+            // 隶属 Server 选择（serverId 仅用于归属标识，不参与 TOML）
+            ExposedDropdownMenuBox(
+                expanded = serverDropdownExpanded,
+                onExpandedChange = { serverDropdownExpanded = it }
+            ) {
+                OutlinedTextField(
+                    value = serverConfig?.let { "${it.name} (${it.serverId})" } ?: "No server configured",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Belongs to Server") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = serverDropdownExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = serverDropdownExpanded,
+                    onDismissRequest = { serverDropdownExpanded = false }
+                ) {
+                    serverConfig?.let { server ->
+                        DropdownMenuItem(
+                            text = { Text("${server.name} (${server.serverId})") },
+                            onClick = {
+                                serverId = server.serverId
+                                serverDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
             // 服务器连接配置已移至主界面
             Card(
@@ -318,38 +339,15 @@ fun ConfigEditScreen(
                 }
             }
             
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Configuration Name *") },
+                placeholder = { Text("e.g., xtcp-visitor") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            
             Spacer(modifier = Modifier.height(16.dp))
-            
-            // 隶属 Server 选择（serverId 仅用于归属标识，不参与 TOML）
-            ExposedDropdownMenuBox(
-                expanded = serverDropdownExpanded,
-                onExpandedChange = { serverDropdownExpanded = it }
-            ) {
-                OutlinedTextField(
-                    value = serverConfig?.let { "${it.name} (${it.serverId})" } ?: "No server configured",
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Belongs to Server") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = serverDropdownExpanded) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor()
-                )
-                ExposedDropdownMenu(
-                    expanded = serverDropdownExpanded,
-                    onDismissRequest = { serverDropdownExpanded = false }
-                ) {
-                    serverConfig?.let { server ->
-                        DropdownMenuItem(
-                            text = { Text("${server.name} (${server.serverId})") },
-                            onClick = {
-                                serverId = server.serverId
-                                serverDropdownExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(12.dp))
             
             // STCP/XTCP 特有配置
             AnimatedVisibility(visible = isSecretProtocol) {
@@ -736,6 +734,8 @@ fun ConfigEditScreen(
                 }
             }
             
+            Spacer(modifier = Modifier.height(16.dp))
+            
             Spacer(modifier = Modifier.height(24.dp))
             
             // 配置预览
@@ -766,7 +766,8 @@ fun ConfigEditScreen(
                                 localPort = 0,
                                 bindAddr = stcpBindAddr,
                                 useEncryption = useEncryption,
-                                useCompression = useCompression
+                                useCompression = useCompression,
+                                serverId = serverId
                             )
                         } else {
                             val xtcpPreview = FrpConfig(
@@ -865,6 +866,7 @@ fun ConfigEditScreen(
                                 bindAddr = stcpBindAddr,
                                 useEncryption = useEncryption,
                                 useCompression = useCompression,
+                                serverId = serverId,
                                 groupId = groupId,
                                 groupName = finalGroupName,
                                 isGroupPrimary = false

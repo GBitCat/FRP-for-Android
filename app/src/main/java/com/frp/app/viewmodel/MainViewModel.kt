@@ -172,14 +172,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (linked.serverName != derived.serverName ||
                 linked.secretKey != derived.secretKey ||
                 linked.useEncryption != derived.useEncryption ||
-                linked.useCompression != derived.useCompression
+                linked.useCompression != derived.useCompression ||
+                linked.serverId != derived.serverId
             ) {
                 repository.updateConfig(
                     linked.copy(
                         serverName = derived.serverName,
                         secretKey = derived.secretKey,
                         useEncryption = derived.useEncryption,
-                        useCompression = derived.useCompression
+                        useCompression = derived.useCompression,
+                        serverId = derived.serverId
                     )
                 )
             }
