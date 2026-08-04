@@ -24,10 +24,9 @@
 
 ## 📱 截图
 
-<!-- 添加截图 -->
-<!-- ![Main Screen](screenshots/main.png) -->
-<!-- ![Log Screen](screenshots/log.png) -->
-<!-- ![Traffic Screen](screenshots/traffic.png) -->
+| 仪表盘 | 配置 | 设置 |
+| --- | --- | --- |
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Configs](docs/screenshots/configs.png) | ![Settings](docs/screenshots/settings.png) |
 
 ## 🚀 快速开始
 
