@@ -164,27 +164,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun syncLinkedStcp(primary: FrpConfig) {
         viewModelScope.launch {
-            if (!primary.useFallback || primary.fallbackTo.isBlank()) return@launch
-            val all = repository.getAllConfigsSync()
-            val linked = all.find { it.name == primary.fallbackTo && it.protocol == "stcp" }
-                ?: return@launch
-            val derived = ConfigGenerator.createLinkedStcpConfig(primary)
-            if (linked.serverName != derived.serverName ||
-                linked.secretKey != derived.secretKey ||
-                linked.useEncryption != derived.useEncryption ||
-                linked.useCompression != derived.useCompression ||
-                linked.serverId != derived.serverId
-            ) {
-                repository.updateConfig(
-                    linked.copy(
-                        serverName = derived.serverName,
-                        secretKey = derived.secretKey,
-                        useEncryption = derived.useEncryption,
-                        useCompression = derived.useCompression,
-                        serverId = derived.serverId
-                    )
-                )
+            doSyncLinkedStcp(primary)
+        }
+    }
+    
+    /**
+     * 自定义 STCP Name 变化时：重命名实际 STCP 子配置，再同步其字段，
+     * 保证 fallbackTo 指向真实存在的配置且两端一致。
+     */
+    fun renameAndSyncStcp(oldName: String, newName: String, primary: FrpConfig) {
+        viewModelScope.launch {
+            if (oldName.isNotBlank() && oldName != newName) {
+                repository.renameStcpConfig(oldName, newName)
             }
+            doSyncLinkedStcp(primary)
+        }
+    }
+    
+    private suspend fun doSyncLinkedStcp(primary: FrpConfig) {
+        if (!primary.useFallback || primary.fallbackTo.isBlank()) return
+        val all = repository.getAllConfigsSync()
+        val linked = all.find { it.name == primary.fallbackTo && it.protocol == "stcp" }
+            ?: return
+        val derived = ConfigGenerator.createLinkedStcpConfig(primary)
+        if (linked.serverName != derived.serverName ||
+            linked.secretKey != derived.secretKey ||
+            linked.useEncryption != derived.useEncryption ||
+            linked.useCompression != derived.useCompression ||
+            linked.serverId != derived.serverId
+        ) {
+            repository.updateConfig(
+                linked.copy(
+                    serverName = derived.serverName,
+                    secretKey = derived.secretKey,
+                    useEncryption = derived.useEncryption,
+                    useCompression = derived.useCompression,
+                    serverId = derived.serverId
+                )
+            )
         }
     }
     
@@ -210,6 +227,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setGroupEnabled(groupId: Long, enabled: Boolean) {
         viewModelScope.launch {
             repository.updateGroupEnabled(groupId, enabled)
+        }
+    }
+    
+    // STCP 子配置重命名（跟随自定义 STCP Name，保证 fallbackTo 指向真实配置）
+    fun renameStcpConfig(oldName: String, newName: String) {
+        if (oldName.isBlank() || oldName == newName) return
+        viewModelScope.launch {
+            repository.renameStcpConfig(oldName, newName)
         }
     }
     

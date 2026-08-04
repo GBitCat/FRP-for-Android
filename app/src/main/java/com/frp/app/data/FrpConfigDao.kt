@@ -60,6 +60,12 @@ interface FrpConfigDao {
     @Query("UPDATE frp_configs SET groupName = :name WHERE groupId = :groupId")
     fun updateGroupName(groupId: Long, name: String)
     
+    @Query("UPDATE frp_configs SET serverId = :newId WHERE serverId = :oldId OR serverId = ''")
+    fun reassignServerId(newId: String, oldId: String)
+    
+    @Query("UPDATE frp_configs SET name = :newName WHERE name = :oldName AND protocol = 'stcp'")
+    fun renameStcpConfig(oldName: String, newName: String)
+    
     @Query("SELECT * FROM frp_configs WHERE running = 1 LIMIT 1")
     fun getRunningConfig(): FrpConfig?
 }

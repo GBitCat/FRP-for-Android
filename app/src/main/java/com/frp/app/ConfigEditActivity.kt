@@ -185,7 +185,13 @@ fun ConfigEditScreen(
                                 groupName = if (originalConfig?.isInGroup() == true) editGroupName else (originalConfig?.groupName ?: ""),
                                 useFallback = useFallback,
                                 fallbackTo = if (useFallback) {
-                                    if (useCustomStcp) stcpName.ifBlank { autoStcpName } else autoStcpName
+                                    if (useCustomStcp) {
+                                        stcpName.ifBlank { autoStcpName }
+                                    } else {
+                                        // 非自定义：保留原有回落目标（避免主配置改名破坏 fallbackTo）
+                                        originalConfig?.fallbackTo?.takeIf { it.isNotBlank() }
+                                            ?: autoStcpName
+                                    }
                                 } else "",
                                 fallbackTimeoutMs = fallbackTimeoutMs.toIntOrNull() ?: 3000,
                                 useCustomStcp = useCustomStcp,
@@ -204,9 +210,20 @@ fun ConfigEditScreen(
                             
                             if (isEditing) {
                                 viewModel.updateConfig(config)
-                                // 主配置保存后联动同步 linked STCP，保证生成文件与预览一致
-                                if (config.isVisitor() && config.supportsFallback()) {
-                                    viewModel.syncLinkedStcp(config)
+                                // 主配置保存后联动同步 linked STCP，保证生成文件与预览一致；
+                                // 自定义 STCP Name 变化时先重命名实际子配置再同步
+                                if (config.isVisitor() && config.supportsFallback() && config.useFallback) {
+                                    val oldLinked = originalConfig?.fallbackTo
+                                    val newLinked = if (useCustomStcp) {
+                                        stcpName.ifBlank { autoStcpName }
+                                    } else {
+                                        originalConfig?.fallbackTo?.takeIf { it.isNotBlank() } ?: autoStcpName
+                                    }
+                                    if (useCustomStcp && !oldLinked.isNullOrBlank() && oldLinked != newLinked) {
+                                        viewModel.renameAndSyncStcp(oldLinked, newLinked, config)
+                                    } else {
+                                        viewModel.syncLinkedStcp(config)
+                                    }
                                 }
                                 // 分组重命名：同步到组内全部配置
                                 val origGroupId = originalConfig?.groupId
