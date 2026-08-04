@@ -1,9 +1,6 @@
 name: Auto Comment
 on:
-  issues:
-    types: [opened]
-  pull_request:
-    types: [opened]
+  workflow_dispatch:
 
 permissions:
   issues: write
