@@ -210,18 +210,19 @@ class FrpService : Service() {
     private fun startConnectionStatusMonitor() {
         ConnectionStatusParser.getInstance().start(logManager, serviceScope)
         connectionStatusJob?.cancel()
+        // 通知栏显示已连接应用数量（P2P 直连或 STCP 中转均视为已连接）
         connectionStatusJob = serviceScope.launch {
-            ConnectionStatusParser.getInstance().status.collect { status ->
-                if (status.type != ConnectionType.UNKNOWN) {
-                    val subtitle = when (status.type) {
-                        ConnectionType.P2P -> "P2P Direct"
-                        ConnectionType.RELAY -> "Relay (STCP)"
-                        ConnectionType.ERROR -> status.detail
-                        ConnectionType.CONNECTED -> "Connected to server"
-                        ConnectionType.UNKNOWN -> ""
-                    }
-                    updateNotificationWithSubtitle("", subtitle)
+            ConnectionStatusParser.getInstance().appStatuses.collect { apps ->
+                val connected = apps.values.count {
+                    it.type == ConnectionType.P2P || it.type == ConnectionType.RELAY
                 }
+                val total = apps.size
+                val subtitle = if (total == 0) {
+                    "Connecting..."
+                } else {
+                    "Connected apps: $connected/$total"
+                }
+                updateNotificationWithSubtitle("", subtitle)
             }
         }
     }
