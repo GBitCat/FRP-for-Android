@@ -117,6 +117,12 @@ class FrpConfigRepository(
         }
     }
     
+    suspend fun updateGroupName(groupId: Long, name: String) {
+        withContext(Dispatchers.IO) {
+            frpConfigDao.updateGroupName(groupId, name)
+        }
+    }
+    
     suspend fun updateAllRunningStatus(running: Boolean) {
         withContext(Dispatchers.IO) {
             frpConfigDao.updateAllRunningStatus(running)

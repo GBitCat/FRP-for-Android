@@ -77,6 +77,7 @@ fun ConfigEditScreen(
     var bindAddr by remember { mutableStateOf("127.0.0.1") }
     var showSecretKey by remember { mutableStateOf(false) }
     var serverId by remember { mutableStateOf("") }
+    var editGroupName by remember { mutableStateOf("") }
     
     // 传输加密/压缩（需与对端 frpc 配置一致）
     var useEncryption by remember { mutableStateOf(false) }
@@ -116,6 +117,7 @@ fun ConfigEditScreen(
                 bindPort = config.bindPort.toString()
                 bindAddr = config.bindAddr
                 serverId = config.serverId
+                editGroupName = config.groupName
                 useEncryption = config.useEncryption
                 useCompression = config.useCompression
                 android.util.Log.d("ConfigEdit", "Loading - useFallback: ${config.useFallback}, fallbackTo: ${config.fallbackTo}")
@@ -180,6 +182,7 @@ fun ConfigEditScreen(
                                 useEncryption = useEncryption,
                                 useCompression = useCompression,
                                 serverId = serverId.ifEmpty { serverConfig?.serverId ?: "" },
+                                groupName = if (originalConfig?.isInGroup() == true) editGroupName else (originalConfig?.groupName ?: ""),
                                 useFallback = useFallback,
                                 fallbackTo = if (useFallback) {
                                     if (useCustomStcp) stcpName.ifBlank { autoStcpName } else autoStcpName
@@ -204,6 +207,13 @@ fun ConfigEditScreen(
                                 // 主配置保存后联动同步 linked STCP，保证生成文件与预览一致
                                 if (config.isVisitor() && config.supportsFallback()) {
                                     viewModel.syncLinkedStcp(config)
+                                }
+                                // 分组重命名：同步到组内全部配置
+                                val origGroupId = originalConfig?.groupId
+                                if (origGroupId != null && origGroupId > 0 &&
+                                    editGroupName != originalConfig?.groupName
+                                ) {
+                                    viewModel.updateGroupName(origGroupId, editGroupName)
                                 }
                                 Toast.makeText(context, "Configuration updated", Toast.LENGTH_SHORT).show()
                                 onSave()
@@ -267,6 +277,18 @@ fun ConfigEditScreen(
                         )
                     }
                 }
+            }
+            
+            // 分组名称（仅分组内配置可修改，保存后同步到组内全部配置）
+            if (originalConfig?.isInGroup() == true) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = editGroupName,
+                    onValueChange = { editGroupName = it },
+                    label = { Text("Group Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
             
             Spacer(modifier = Modifier.height(12.dp))
