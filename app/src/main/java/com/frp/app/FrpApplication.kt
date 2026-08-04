@@ -1,6 +1,7 @@
 package com.frp.app
 
 import com.frp.app.data.FrpStatusHolder
+import com.frp.app.data.ThemeSettingsHolder
 
 import android.app.Application
 import android.app.NotificationChannel
@@ -17,6 +18,7 @@ class FrpApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         FrpStatusHolder.init(this)
+        ThemeSettingsHolder.init(this)
         createNotificationChannel()
     }
 

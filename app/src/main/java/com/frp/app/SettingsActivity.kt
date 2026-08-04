@@ -4,6 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,7 +15,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import android.app.ActivityManager
 import android.content.Context
@@ -21,6 +28,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import com.frp.app.data.ConfigImportExport
+import com.frp.app.data.ThemeSettingsHolder
 import com.frp.app.manager.TrafficStats
 import com.frp.app.viewmodel.MainViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -118,7 +126,8 @@ fun SettingsContent() {
     var autoStart by remember { mutableStateOf(false) }
     var showNotifications by remember { mutableStateOf(true) }
     var keepAlive by remember { mutableStateOf(true) }
-    var darkMode by remember { mutableStateOf(false) }
+    val themeMode by ThemeSettingsHolder.themeMode.collectAsState()
+    val themeColor by ThemeSettingsHolder.primaryColor.collectAsState()
     var logRetention by remember { mutableStateOf("7") }
     var trafficStatsEnabled by remember { mutableStateOf(prefs.getBoolean("traffic_stats_enabled", false)) }
     
@@ -177,14 +186,78 @@ fun SettingsContent() {
                     
                     Divider(modifier = Modifier.padding(horizontal = 16.dp))
                     
-                    // 深色模式
-                    SettingsSwitch(
-                        title = "Dark mode",
-                        subtitle = "Use dark theme (requires restart)",
-                        icon = Icons.Default.DarkMode,
-                        checked = darkMode,
-                        onCheckedChange = { darkMode = it }
+                    // 主题模式
+                    Text(
+                        text = "Theme mode",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("System" to "system", "Light" to "light", "Dark" to "dark").forEach { (label, value) ->
+                            FilterChip(
+                                selected = themeMode == value,
+                                onClick = { ThemeSettingsHolder.setThemeMode(context, value) },
+                                label = { Text(label) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    
+                    // 主题色（参考 FlClash 预设主色；Auto = 跟随系统动态色）
+                    Text(
+                        text = "Theme color",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // 系统动态（Auto）
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(
+                                    if (themeColor == null) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .border(
+                                    width = 2.dp,
+                                    color = if (themeColor == null) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                    shape = androidx.compose.foundation.shape.CircleShape
+                                )
+                                .clickable { ThemeSettingsHolder.setPrimaryColor(context, null) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("A", style = MaterialTheme.typography.labelSmall)
+                        }
+                        listOf(
+                            0xFF795548.toInt(), 0xFF03A9F4.toInt(), 0xFFFFFF00.toInt(),
+                            0xFFBBC9CC.toInt(), 0xFFABD397.toInt(), 0xFFD8C0C3.toInt(), 0xFF665390.toInt()
+                        ).forEach { color ->
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(Color(color))
+                                    .border(
+                                        width = 2.dp,
+                                        color = if (themeColor == color) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        shape = androidx.compose.foundation.shape.CircleShape
+                                    )
+                                    .clickable { ThemeSettingsHolder.setPrimaryColor(context, color) }
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     Divider(modifier = Modifier.padding(horizontal = 16.dp))
 
