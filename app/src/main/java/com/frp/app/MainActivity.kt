@@ -341,8 +341,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     
     // Server 配置预览对话框
     if (showServerPreviewDialog) {
-        val previewText = serverConfig?.let {
-            ConfigGenerator.generateServerConfigPreview(it)
+        val previewText = serverConfig?.let { server ->
+            // 拼接隶属于该 server 的应用配置（未选择 serverId 的老配置默认归属）
+            val apps = configs.filter { it.serverId.isEmpty() || it.serverId == server.serverId }
+            ConfigGenerator.generateServerConfigPreview(server, apps)
         } ?: "Server not configured"
         AlertDialog(
             onDismissRequest = { showServerPreviewDialog = false },

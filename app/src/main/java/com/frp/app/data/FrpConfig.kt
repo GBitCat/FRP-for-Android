@@ -51,6 +51,9 @@ data class FrpConfig(
     // 启用开关：enabled 的配置会被拼接到统一 TOML，随服务端连接一起启动
     val enabled: Boolean = true,
     
+    // 隶属的 Server ID（对应 ServerConfig.serverId；空 = 未选择，默认归属当前 server）
+    val serverId: String = "",
+    
     val running: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()

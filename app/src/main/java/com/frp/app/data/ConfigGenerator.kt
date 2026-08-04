@@ -117,10 +117,15 @@ class ConfigGenerator(private val context: Context) {
     }
 
     /**
-     * 生成服务端连接配置的全局段预览（serverAddr/token/STUN/transport）。
+     * 生成服务端配置完整预览：全局段 + 隶属于该 server 的应用配置拼接。
+     * [appConfigs] 应传入该 server 归属的应用配置（serverId 匹配或为空）。
      */
-    fun generateServerConfigPreview(server: ServerConfig): String =
-        generateGlobalConfig(server)
+    fun generateServerConfigPreview(server: ServerConfig, appConfigs: List<FrpConfig>): String =
+        if (appConfigs.isEmpty()) {
+            generateGlobalConfig(server)
+        } else {
+            generateAllConfig(server, appConfigs)
+        }
 
     /**
      * 生成单个配置的完整 frpc 配置（编辑页预览用）。
