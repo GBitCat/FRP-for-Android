@@ -3,6 +3,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:liquid_glacier/liquid_glacier.dart';
 
+import '../services/frp_engine.dart';
 import '../widgets/frosted_dialog.dart';
 import 'configs_screen.dart';
 import 'dashboard_screen.dart';
@@ -18,6 +19,17 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _selectedTab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // 支持通过 Intent 指定初始 Tab（实机截图/测试用）
+    FrpEngine.instance.getInitialTab().then((t) {
+      if (mounted && t >= 0 && t <= 2) {
+        setState(() => _selectedTab = t);
+      }
+    });
+  }
 
   /// + 按钮：统一 FlClash 风格悬浮选项（毛玻璃 + 居中卡片）
   void _showAddConfigMenu(BuildContext context) {

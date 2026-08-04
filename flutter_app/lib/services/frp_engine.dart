@@ -93,6 +93,16 @@ class FrpEngine {
     } catch (_) {}
   }
 
+  /// 读取启动 Intent 的 initial_tab（测试/截图用）
+  Future<int> getInitialTab() async {
+    try {
+      final v = await _channel.invokeMethod<int>('getInitialTab');
+      return v ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   Future<String> getIpv4() async {
     try {
       final v = await _channel.invokeMethod<String>('getIpv4');
