@@ -10,10 +10,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 enum class ConnectionType {
-    UNKNOWN,    // 未连接
+    UNKNOWN,    // 未连接 / 连接中
+    CONNECTED,  // 已连到 frps（服务端连接成功）
     P2P,        // XTCP 直连
     RELAY,      // STCP 中转
-    ERROR       // 配置错误
+    ERROR       // 配置错误 / 连接失败
 }
 
 data class ConnectionStatus(
@@ -48,6 +49,10 @@ class ConnectionStatusParser private constructor() {
     // 每个应用（visitor）各自的连接状态：visitor 名 -> 状态
     private val _appStatuses = MutableStateFlow<Map<String, ConnectionStatus>>(emptyMap())
     val appStatuses: StateFlow<Map<String, ConnectionStatus>> = _appStatuses.asStateFlow()
+    
+    // 服务端连接状态（frpc ↔ frps）：未启动/连接中/已连接/失败
+    private val _serverStatus = MutableStateFlow(ConnectionStatus(ConnectionType.UNKNOWN, "No connection"))
+    val serverStatus: StateFlow<ConnectionStatus> = _serverStatus.asStateFlow()
 
     private var lastLogCount = 0
     private var collectJob: Job? = null
@@ -80,12 +85,24 @@ class ConnectionStatusParser private constructor() {
     fun reset() {
         _status.value = ConnectionStatus()
         _appStatuses.value = emptyMap()
+        _serverStatus.value = ConnectionStatus(ConnectionType.UNKNOWN, "No connection")
     }
 
     private fun parseNewLogs(logs: List<LogEntry>) {
         for (log in logs) {
             if (log.tag != "frpc") continue
             val msg = log.message.replace(ANSI_REGEX, "")
+
+            // === 服务端连接状态 ===
+            when {
+                msg.contains("login to server success", ignoreCase = true) ->
+                    _serverStatus.value = ConnectionStatus(ConnectionType.CONNECTED, "Connected to server")
+                msg.contains("try to connect to server", ignoreCase = true) ->
+                    _serverStatus.value = ConnectionStatus(ConnectionType.UNKNOWN, "Connecting to server...")
+                msg.contains("login to the server failed", ignoreCase = true) ||
+                    msg.contains("connect to server error", ignoreCase = true) ->
+                    _serverStatus.value = ConnectionStatus(ConnectionType.ERROR, "Server connection failed")
+            }
 
             // 提取事件前的 visitor 名（日志格式：[runid] [visitorName] event...）
             fun visitorName(vararg keywords: String): String? {
