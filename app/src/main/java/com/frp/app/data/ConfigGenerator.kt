@@ -117,6 +117,12 @@ class ConfigGenerator(private val context: Context) {
     }
 
     /**
+     * 生成服务端连接配置的全局段预览（serverAddr/token/STUN/transport）。
+     */
+    fun generateServerConfigPreview(server: ServerConfig): String =
+        generateGlobalConfig(server)
+
+    /**
      * 生成单个配置的完整 frpc 配置（编辑页预览用）。
      */
     fun generateFullConfig(

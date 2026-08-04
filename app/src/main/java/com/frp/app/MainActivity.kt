@@ -44,6 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.frp.app.data.ConfigGenerator
 import com.frp.app.data.ConfigImportExport
 import com.frp.app.data.FrpConfig
 import com.frp.app.data.FrpStatus
@@ -103,6 +104,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     
     // Server 编辑对话框（配置 Tab 入口）
     var showServerEditDialog by remember { mutableStateOf(false) }
+    
+    // Server 配置预览对话框
+    var showServerPreviewDialog by remember { mutableStateOf(false) }
     
     Scaffold(
         topBar = {
@@ -236,6 +240,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    IconButton(onClick = { showServerPreviewDialog = true }) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Preview config")
+                    }
                     IconButton(onClick = { showServerEditDialog = true }) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit server")
                     }
@@ -328,6 +335,33 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onSave = { newConfig ->
                 showServerEditDialog = false
                 viewModel.saveServerConfig(newConfig)
+            }
+        )
+    }
+    
+    // Server 配置预览对话框
+    if (showServerPreviewDialog) {
+        val previewText = serverConfig?.let {
+            ConfigGenerator.generateServerConfigPreview(it)
+        } ?: "Server not configured"
+        AlertDialog(
+            onDismissRequest = { showServerPreviewDialog = false },
+            title = { Text("Server Config Preview") },
+            text = {
+                Text(
+                    text = previewText,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showServerPreviewDialog = false }) {
+                    Text("Close")
+                }
             }
         )
     }
