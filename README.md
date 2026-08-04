@@ -24,9 +24,9 @@
 
 ## 📱 截图
 
-| 仪表盘 | 配置 | 设置 |
+| 仪表盘 | 手动配置 | 切换服务器 |
 | --- | --- | --- |
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Configs](docs/screenshots/configs.png) | ![Settings](docs/screenshots/settings.png) |
+| ![Dashboard](docs/screenshots/dashboard.jpg) | ![Manual Config](docs/screenshots/manual_config.jpg) | ![Switch Server](docs/screenshots/switch_server.jpg) |
 
 ## 🚀 快速开始
 
