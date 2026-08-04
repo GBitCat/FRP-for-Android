@@ -24,12 +24,19 @@ class FrpConfigRepository(
     
     suspend fun saveServerConfig(config: ServerConfig) {
         withContext(Dispatchers.IO) {
+            val old = serverConfigDao.getServerConfigSync()
             val withId = if (config.serverId.isBlank()) {
                 config.copy(serverId = generateServerId())
             } else {
                 config
             }
             serverConfigDao.saveServerConfig(withId.copy(updatedAt = System.currentTimeMillis()))
+            // Server 保存后同步已有配置归属：未选择或旧 id 的配置跟随新 id，
+            // 保证 Server 预览能正确拼接隶属应用
+            val oldId = old?.serverId ?: ""
+            if (oldId != withId.serverId || old == null) {
+                frpConfigDao.reassignServerId(withId.serverId, oldId)
+            }
         }
     }
     
@@ -120,6 +127,12 @@ class FrpConfigRepository(
     suspend fun updateGroupName(groupId: Long, name: String) {
         withContext(Dispatchers.IO) {
             frpConfigDao.updateGroupName(groupId, name)
+        }
+    }
+    
+    suspend fun renameStcpConfig(oldName: String, newName: String) {
+        withContext(Dispatchers.IO) {
+            frpConfigDao.renameStcpConfig(oldName, newName)
         }
     }
     

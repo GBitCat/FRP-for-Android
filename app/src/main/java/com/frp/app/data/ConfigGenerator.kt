@@ -163,7 +163,13 @@ class ConfigGenerator(private val context: Context) {
     ): String {
         return buildString {
             append(generateGlobalConfig(server, stunServer, serverAddrOriginal))
-            configs.forEachIndexed { index, config ->
+            // 同分组配置连续排列（组内主配置在前），无分组配置排在后面
+            val ordered = configs.sortedWith(
+                compareBy<FrpConfig> { if (it.isInGroup()) 0 else 1 }
+                    .thenBy { if (it.isInGroup()) it.groupId else Long.MAX_VALUE }
+                    .thenByDescending { it.isGroupPrimary }
+            )
+            ordered.forEachIndexed { index, config ->
                 if (index > 0) appendLine()
                 appendLine("# Config: ${config.name} (${config.protocol})")
                 append(generateProxyConfig(config))
