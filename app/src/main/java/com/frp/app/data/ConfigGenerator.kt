@@ -178,7 +178,8 @@ class ConfigGenerator(private val context: Context) {
     }
 
     fun createLinkedStcpConfig(xtcpConfig: FrpConfig): FrpConfig {
-        val stcpName = "${xtcpConfig.name}-stcp"
+        // XTCP 固定规则命名（linux-ssh-xtcp）时，STCP 名基于基础名 + "-stcp"（linux-ssh-stcp）
+        val stcpName = "${xtcpConfig.name.removeSuffix("-xtcp")}-stcp"
         return FrpConfig(
             name = stcpName,
             localIp = xtcpConfig.localIp,

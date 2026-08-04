@@ -1,5 +1,8 @@
 package com.frp.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -7,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -95,6 +99,9 @@ fun ConfigEditScreen(
     var stcpBindPort by remember { mutableStateOf("-1") }
     var stcpBindAddr by remember { mutableStateOf("127.0.0.1") }
     var useCustomStcp by remember { mutableStateOf(false) }  // 是否自定义STCP配置
+    var useNamingRule by remember { mutableStateOf(true) }   // XTCP 固定规则：名称自动追加 -xtcp 后缀
+    var serverNameCustomized by remember { mutableStateOf(false) } // Server Proxy Name 是否被手动修改
+    var showPeerConfigDialog by remember { mutableStateOf(false) }
     var showGroupNameDialog by remember { mutableStateOf(false) }
     var pendingSaveConfig by remember { mutableStateOf<FrpConfig?>(null) }
     var originalConfig by remember { mutableStateOf<FrpConfig?>(null) }
@@ -106,7 +113,15 @@ fun ConfigEditScreen(
             val config = viewModel.getConfigById(configId)
             if (config != null) {
                 originalConfig = config
-                name = config.name
+                // 固定规则：名称以 -xtcp 结尾时拆出基础名并开启规则；否则保持原名（规则关闭）
+                if (config.protocol.lowercase() == "xtcp" && config.name.endsWith("-xtcp")) {
+                    name = config.name.removeSuffix("-xtcp")
+                    useNamingRule = true
+                } else {
+                    name = config.name
+                    useNamingRule = config.protocol.lowercase() == "xtcp"
+                }
+                serverNameCustomized = false
                 localIp = config.localIp
                 localPort = config.localPort.toString()
                 remotePort = config.remotePort.toString()
@@ -143,6 +158,21 @@ fun ConfigEditScreen(
     // 自动生成名称
     val autoStcpName = "${name.ifBlank { "service" }}-stcp"
     
+    // XTCP 固定规则后的有效名称（如 linux-ssh → linux-ssh-xtcp）
+    val effectiveName = if (protocol.lowercase() == "xtcp" && useNamingRule) {
+        val base = name.trim()
+        if (base.endsWith("-xtcp")) base else if (base.isBlank()) "" else "$base-xtcp"
+    } else {
+        name
+    }
+    
+    // Server Proxy Name 默认跟随固定规则后的命名；用户手动修改后不再自动覆盖
+    LaunchedEffect(protocol, useNamingRule, effectiveName) {
+        if (!serverNameCustomized && protocol.lowercase() == "xtcp") {
+            serverName = effectiveName
+        }
+    }
+    
     // 初始化STCP配置（使用XTCP的值）
     LaunchedEffect(name, secretKey, serverName, bindAddr) {
         if (!useCustomStcp) {
@@ -169,7 +199,7 @@ fun ConfigEditScreen(
                             // 避免手工构造遗漏（历史 bug：分组字段被清零）
                             val config = (originalConfig ?: FrpConfig(name = name, localPort = 0)).copy(
                                 id = configId ?: 0,
-                                name = name,
+                                name = effectiveName,
                                 localIp = localIp,
                                 localPort = localPort.toIntOrNull() ?: 0,
                                 remotePort = remotePort.toIntOrNull() ?: 0,
@@ -403,10 +433,39 @@ fun ConfigEditScreen(
                     Column(
                         modifier = Modifier.padding(16.dp)
                     ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${protocol.uppercase()} Settings",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            // XTCP 固定规则开关：开启后名称自动追加 -xtcp 后缀
+                            if (protocol.lowercase() == "xtcp") {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Fixed Rule",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Switch(
+                                        checked = useNamingRule,
+                                        onCheckedChange = { useNamingRule = it }
+                                    )
+                                }
+                            }
+                        }
                         Text(
-                            text = "${protocol.uppercase()} Settings",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(bottom = 12.dp)
+                            text = if (protocol.lowercase() == "xtcp" && useNamingRule) {
+                                "Auto suffix: -xtcp appended to the name"
+                            } else {
+                                "Name is used as-is"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                         )
                         
                         // 主配置名（XTCP Name / STCP Name，与 STCP Fallback 的 STCP Name 对应）
@@ -414,9 +473,17 @@ fun ConfigEditScreen(
                             value = name,
                             onValueChange = { name = it },
                             label = { Text("${protocol.uppercase()} Name") },
-                            placeholder = { Text("e.g., xtcp-visitor") },
+                            placeholder = { Text("e.g., linux-ssh") },
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            suffix = if (protocol.lowercase() == "xtcp" && useNamingRule) ({
+                                Text(
+                                    text = "-xtcp",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
+                            }) else null
                         )
                         
                         Spacer(modifier = Modifier.height(12.dp))
@@ -512,7 +579,10 @@ fun ConfigEditScreen(
                             Column {
                                 OutlinedTextField(
                                     value = serverName,
-                                    onValueChange = { serverName = it },
+                                    onValueChange = {
+                                        serverName = it
+                                        serverNameCustomized = true
+                                    },
                                     label = { Text("Server Proxy Name *") },
                                     placeholder = { Text("Server proxy name, e.g. xtcp_ssh") },
                                     modifier = Modifier.fillMaxWidth()
@@ -593,7 +663,11 @@ fun ConfigEditScreen(
                                     }
                                     Switch(
                                         checked = useFallback,
-                                        onCheckedChange = { useFallback = it }
+                                        onCheckedChange = {
+                                            useFallback = it
+                                            // 启用回落时默认使用自动生成模式
+                                            if (it) useCustomStcp = false
+                                        }
                                     )
                                 }
                                 
@@ -729,8 +803,8 @@ fun ConfigEditScreen(
                                     )
                                     Text(
                                         text = "name: $autoStcpName\n" +
-                                                "secretKey: ${secretKey.ifBlank { "(from XTCP)" }}\n" +
-                                                "serverName: ${serverName.ifBlank { "(from XTCP)" }}\n" +
+                                                "secretKey: ${stcpSecretKey.ifBlank { secretKey.ifBlank { "(from XTCP)" } }}\n" +
+                                                "serverName: ${stcpServerName.ifBlank { serverName.replace("xtcp", "stcp") }.ifBlank { "(from XTCP)" }}\n" +
                                                 "bindPort: -1",
                                         style = MaterialTheme.typography.bodySmall.copy(
                                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
@@ -826,7 +900,7 @@ fun ConfigEditScreen(
                             )
                         } else {
                             val xtcpPreview = FrpConfig(
-                                name = name.ifBlank { "preview" },
+                                name = effectiveName.ifBlank { "preview" },
                                 protocol = "xtcp",
                                 role = "visitor",
                                 secretKey = secretKey.ifBlank { null },
@@ -842,7 +916,7 @@ fun ConfigEditScreen(
                     } else null
                     
                     val previewXtcpConfig = FrpConfig(
-                        name = name.ifBlank { "preview" },
+                        name = effectiveName.ifBlank { "preview" },
                         localIp = localIp,
                         localPort = localPort.toIntOrNull() ?: 0,
                         remotePort = remotePort.toIntOrNull() ?: 0,
@@ -879,8 +953,77 @@ fun ConfigEditScreen(
                         ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    
+                    // 推导对端配置：生成目标机器上运行的 frpc 配置
+                    if (isSecretProtocol && isVisitor) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = { showPeerConfigDialog = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Derive Peer Config")
+                        }
+                    }
                 }
             }
+
+    // 推导对端配置弹窗
+    if (showPeerConfigDialog) {
+        val peerConfigText = derivePeerConfigText(
+            xtcpName = effectiveName,
+            stcpName = stcpName.ifBlank { autoStcpName },
+            secretKey = secretKey,
+            stcpSecretKey = stcpSecretKey,
+            useEncryption = useEncryption,
+            useCompression = useCompression,
+            localIp = localIp,
+            localPort = localPort
+        )
+        AlertDialog(
+            onDismissRequest = { showPeerConfigDialog = false },
+            title = { Text("Peer frpc Config") },
+            text = {
+                Column {
+                    Text(
+                        text = "Run this on the target machine. Adjust localIP / localPort to the actual service address.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SelectionContainer {
+                        Text(
+                            text = peerConfigText,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(rememberScrollState())
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        copyToClipboard(context, "frpc_peer", peerConfigText)
+                        Toast.makeText(context, "Peer config copied", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Copy")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPeerConfigDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
 
     // 分组命名对话框
     if (showGroupNameDialog) {
@@ -962,3 +1105,47 @@ fun ConfigEditScreen(
         }
     }
 }
+
+private fun copyToClipboard(context: Context, label: String, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+}
+
+/**
+ * 推导对端（目标机器）frpc 配置：以 server 角色生成 XTCP + STCP 两个 [[proxies]] 块。
+ * localIP / localPort 使用占位值，复制后由用户在目标机器上按实际情况修改。
+ */
+private fun derivePeerConfigText(
+    xtcpName: String,
+    stcpName: String,
+    secretKey: String,
+    stcpSecretKey: String,
+    useEncryption: Boolean,
+    useCompression: Boolean,
+    localIp: String,
+    localPort: String
+): String {
+    val peerIp = localIp.ifBlank { "127.0.0.1" }
+    val peerPort = localPort.toIntOrNull()?.takeIf { it > 0 } ?: 22
+    fun proxy(name: String, protocol: String, key: String) = FrpConfig(
+        name = name,
+        protocol = protocol,
+        role = "server",
+        secretKey = key.ifBlank { null },
+        localIp = peerIp,
+        localPort = peerPort,
+        useEncryption = useEncryption,
+        useCompression = useCompression
+    )
+    return buildString {
+        appendLine("# ===== Peer frpc config (run on the target machine) =====")
+        appendLine("# Adjust localIP / localPort to the actual service address on the peer")
+        appendLine("# (e.g. localIP = \"192.168.3.18\", localPort = 22).")
+        appendLine("# secretKey / encryption / compression must match this app.")
+        appendLine()
+        append(ConfigGenerator.generateProxyConfig(proxy(xtcpName.ifBlank { "xtcp_name" }, "xtcp", secretKey)))
+        appendLine()
+        append(ConfigGenerator.generateProxyConfig(proxy(stcpName.ifBlank { "stcp_name" }, "stcp", stcpSecretKey)))
+    }
+}
+
