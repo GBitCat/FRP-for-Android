@@ -196,7 +196,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             Spacer(modifier = Modifier.height(12.dp))
             
             // 各应用连接状态卡片
-            AppConnectionCard(appStatuses = appStatuses)
+            AppConnectionCard(appStatuses = appStatuses, configs = configs)
                 }
             }
             
@@ -419,7 +419,46 @@ fun MemoryCard() {
 }
 
 @Composable
-fun AppConnectionCard(appStatuses: Map<String, ConnectionStatus>) {
+fun AppConnectionCard(
+    appStatuses: Map<String, ConnectionStatus>,
+    configs: List<FrpConfig>
+) {
+    // 构建显示行：有分组的按应用聚合，无分组的单条显示
+    data class AppRow(val name: String, val protocols: String, val status: ConnectionStatus)
+    
+    val rows = remember(configs, appStatuses) {
+        val rows = mutableListOf<AppRow>()
+        // 分组配置：按 groupId 聚合为一个应用
+        configs.filter { it.isInGroup() }
+            .groupBy { it.groupId }
+            .forEach { (_, groupConfigs) ->
+                val primary = groupConfigs.find { it.isGroupPrimary } ?: groupConfigs.first()
+                val name = primary.groupName.ifBlank { primary.name }
+                val protocols = groupConfigs.map { it.protocol.uppercase() }.distinct().joinToString("·")
+                val statuses = groupConfigs.mapNotNull { appStatuses[it.name] }
+                val status = when {
+                    statuses.any { it.type == ConnectionType.ERROR } -> ConnectionStatus(ConnectionType.ERROR, "Error")
+                    statuses.any { it.type == ConnectionType.P2P } -> ConnectionStatus(ConnectionType.P2P, "P2P")
+                    statuses.any { it.type == ConnectionType.RELAY } -> ConnectionStatus(ConnectionType.RELAY, "Relay")
+                    statuses.isNotEmpty() -> ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
+                    else -> ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
+                }
+                rows.add(AppRow(name, protocols, status))
+            }
+        // 无分组配置：单条显示
+        configs.filter { !it.isInGroup() }.forEach { config ->
+            rows.add(
+                AppRow(
+                    name = config.name,
+                    protocols = config.protocol.uppercase(),
+                    status = appStatuses[config.name]
+                        ?: ConnectionStatus(ConnectionType.UNKNOWN, "Connecting...")
+                )
+            )
+        }
+        rows
+    }
+    
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
@@ -449,7 +488,7 @@ fun AppConnectionCard(appStatuses: Map<String, ConnectionStatus>) {
                 )
             }
             
-            if (appStatuses.isEmpty()) {
+            if (configs.isEmpty()) {
                 Text(
                     text = "没有应用",
                     style = MaterialTheme.typography.bodyMedium,
@@ -463,7 +502,7 @@ fun AppConnectionCard(appStatuses: Map<String, ConnectionStatus>) {
                         .heightIn(max = 108.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    appStatuses.forEach { (name, status) ->
+                    rows.forEach { row ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -471,30 +510,27 @@ fun AppConnectionCard(appStatuses: Map<String, ConnectionStatus>) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = name,
+                                text = row.name,
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f),
                                 maxLines = 1
                             )
-                            val color = when (status.type) {
+                            val color = when (row.status.type) {
                                 ConnectionType.P2P -> Color(0xFF4CAF50)
                                 ConnectionType.RELAY -> Color(0xFFFF9800)
                                 ConnectionType.ERROR -> Color(0xFFF44336)
                                 ConnectionType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                             }
-                            val label = when (status.type) {
-                                ConnectionType.P2P -> "P2P"
-                                ConnectionType.RELAY -> "Relay"
-                                ConnectionType.ERROR -> "Error"
-                                ConnectionType.UNKNOWN -> "Connecting..."
-                            }
+                            // 协议标签（XTCP/STCP/...），颜色反映连接状态
                             Canvas(modifier = Modifier.size(8.dp)) {
                                 drawCircle(color = color)
                             }
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelSmall,
+                                text = row.protocols,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                ),
                                 color = color
                             )
                         }
