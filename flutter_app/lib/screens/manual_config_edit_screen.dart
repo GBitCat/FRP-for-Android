@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../models/frp_config.dart';
 import '../state/app_state.dart';
+import '../widgets/glass_background.dart';
+import '../widgets/glass_surface.dart';
 
 /// 手动编写配置：顶部保留 Server ID 选择 + 分组命名，下方为 TOML 编写区域
 class ManualConfigEditScreen extends StatefulWidget {
@@ -167,19 +169,49 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     if (mounted) Navigator.pop(context);
   }
 
+  InputDecoration _dec(String label, {String? hint}) {
+    final scheme = Theme.of(context).colorScheme;
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: Colors.white.withValues(alpha: 0.06),
+      labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+      hintStyle: TextStyle(color: scheme.onSurfaceVariant.withValues(alpha: 0.7)),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.22)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.22)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.5)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
+    return Stack(
+      children: [
+        const Positioned.fill(child: GlassBackground()),
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
         title: Text(_isEditing ? 'Edit Manual Config' : 'Manual Config'),
         actions: [
           TextButton(onPressed: _save, child: const Text('Save')),
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+        padding: const EdgeInsets.all(12),
+        child: GlassSurface(
+          radius: 24,
+          padding: const EdgeInsets.all(16),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Basic Information', style: Theme.of(context).textTheme.titleMedium),
@@ -187,10 +219,7 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
             // Server ID \u9009\u62e9
             DropdownButtonFormField<String>(
               initialValue: _serverId,
-              decoration: const InputDecoration(
-                labelText: 'Belongs to Server',
-                border: OutlineInputBorder(),
-              ),
+              decoration: _dec('Belongs to Server'),
               items: appState.servers
                   .map((sv) => DropdownMenuItem(
                         value: sv.serverId,
@@ -206,11 +235,7 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
             TextField(
               controller: _groupNameCtrl,
               onChanged: (v) => setState(() => _groupName = v),
-              decoration: const InputDecoration(
-                labelText: 'Group Name',
-                hintText: 'Optional group for this config',
-                border: OutlineInputBorder(),
-              ),
+              decoration: _dec('Group Name', hint: 'Optional group for this config'),
             ),
             const SizedBox(height: 16),
             // \u624b\u52a8\u7f16\u5199\u533a\u57df
@@ -218,11 +243,9 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
             const SizedBox(height: 8),
             Expanded(
               flex: 9,
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: scheme.outlineVariant),
-                  borderRadius: BorderRadius.circular(12),
-                ),
+              child: GlassSurface(
+                radius: 14,
+                padding: const EdgeInsets.all(4),
                 child: TextField(
                   controller: _tomlCtrl,
                   onChanged: (v) => setState(() => _toml = v),
@@ -241,7 +264,10 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
             const Spacer(flex: 1),
           ],
         ),
+        ),
       ),
+    ),
+      ],
     );
   }
 }
