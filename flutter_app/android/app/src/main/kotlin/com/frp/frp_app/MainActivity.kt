@@ -44,6 +44,7 @@ class MainActivity : FlutterActivity() {
                         stopFrpc()
                         result.success(true)
                     }
+                    "getInitialTab" -> result.success(intent?.getIntExtra("initial_tab", -1) ?: -1)
                     "getIpv4" -> result.success(getIpv4())
                     "getIpv6" -> result.success(getIpv6())
                     "getMemoryMb" -> result.success(getMemoryMb())
