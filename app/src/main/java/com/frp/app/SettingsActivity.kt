@@ -80,6 +80,7 @@ fun SettingsContent() {
     val context = LocalContext.current
     val viewModel: MainViewModel = viewModel()
     val configs by viewModel.allConfigs.collectAsState(initial = emptyList())
+    val serverConfig by viewModel.serverConfig.collectAsState(initial = null)
     val configImportExport = remember { ConfigImportExport(context) }
     
     // 导入配置 launcher（SAF 文件选择）
@@ -89,12 +90,13 @@ fun SettingsContent() {
         result.data?.data?.let { uri ->
             val json = configImportExport.readConfigFromUri(uri)
             if (json != null) {
-                val importedConfigs = configImportExport.importConfigs(json)
-                if (importedConfigs != null) {
-                    importedConfigs.forEach { config ->
-                        viewModel.addConfig(config)
-                    }
-                    Toast.makeText(context, "Imported ${importedConfigs.size} configurations", Toast.LENGTH_SHORT).show()
+                val imported = configImportExport.importAll(json)
+                if (imported != null) {
+                    // 先恢复 Server 配置，再插入应用配置
+                    imported.server?.let { viewModel.saveServerConfig(it) }
+                    viewModel.addConfigs(imported.configs)
+                    val serverNote = if (imported.server != null) " + server" else ""
+                    Toast.makeText(context, "Imported ${imported.configs.size} configurations$serverNote", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(context, "Failed to parse config file", Toast.LENGTH_SHORT).show()
                 }
@@ -373,7 +375,7 @@ fun SettingsContent() {
                         icon = Icons.Default.FileDownload,
                         onClick = {
                             if (configs.isNotEmpty()) {
-                                pendingExportJson = configImportExport.exportConfigs(configs)
+                                pendingExportJson = configImportExport.exportAll(configs, serverConfig)
                                 exportLauncher.launch("frp_configs.json")
                             } else {
                                 Toast.makeText(context, "No configs to export", Toast.LENGTH_SHORT).show()
