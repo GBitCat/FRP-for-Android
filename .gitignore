@@ -103,3 +103,19 @@ dependency-reduced-pom.xml
 buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
+
+# macOS
+.DS_Store
+
+# 调试截图（可能包含 UI/网络信息，避免泄漏）
+screenshot*.png
+
+# 密钥 / 签名 / 证书
+*.keystore
+*.jks
+*.pem
+*.crt
+*.hprof
+
+# 冗余本地二进制（frpc 已通过 jniLibs 打包）
+app/src/main/assets/frpc
