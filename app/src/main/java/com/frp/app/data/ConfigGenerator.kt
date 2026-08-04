@@ -184,7 +184,8 @@ class ConfigGenerator(private val context: Context) {
             bindPort = -1,
             bindAddr = "",
             useEncryption = xtcpConfig.useEncryption,
-            useCompression = xtcpConfig.useCompression
+            useCompression = xtcpConfig.useCompression,
+            serverId = xtcpConfig.serverId
         )
     }
     }
