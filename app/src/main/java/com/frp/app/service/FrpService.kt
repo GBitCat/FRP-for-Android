@@ -14,9 +14,11 @@ import com.frp.app.FrpApplication
 import com.frp.app.MainActivity
 import com.frp.app.R
 import com.frp.app.data.AppDatabase
+import com.frp.app.data.FrpConfig
 import com.frp.app.data.ConfigGenerator
 import com.frp.app.data.FrpStatus
 import com.frp.app.data.FrpStatusHolder
+import com.frp.app.manager.ConnectionStatus
 import com.frp.app.manager.ConnectionStatusParser
 import com.frp.app.manager.ConnectionType
 import com.frp.app.manager.FrpManager
@@ -95,6 +97,7 @@ class FrpService : Service() {
                 
                 val database = AppDatabase.getDatabase(this@FrpService)
                 val enabledConfigs = database.frpConfigDao().getEnabledConfigsSync()
+                appConfigs = enabledConfigs
                 
                 if (enabledConfigs.isEmpty()) {
                     logManager.addLog(LogLevel.ERROR, TAG, "No enabled config found. Please enable at least one config.")
@@ -206,17 +209,16 @@ class FrpService : Service() {
     // 连接状态监听：通知栏实时显示 P2P/中转
     private var connectionStatusJob: Job? = null
     private var activeConfigName: String = ""
+    // 启动时缓存的启用配置（用于按应用分组统计）
+    private var appConfigs: List<FrpConfig> = emptyList()
 
     private fun startConnectionStatusMonitor() {
         ConnectionStatusParser.getInstance().start(logManager, serviceScope)
         connectionStatusJob?.cancel()
-        // 通知栏显示已连接应用数量（P2P 直连或 STCP 中转均视为已连接）
+        // 通知栏显示已连接应用数量（按应用分组：同组 xtcp+stcp 视为一个应用）
         connectionStatusJob = serviceScope.launch {
             ConnectionStatusParser.getInstance().appStatuses.collect { apps ->
-                val connected = apps.values.count {
-                    it.type == ConnectionType.P2P || it.type == ConnectionType.RELAY
-                }
-                val total = apps.size
+                val (connected, total) = connectedAppSummary(apps)
                 val subtitle = if (total == 0) {
                     "Connecting..."
                 } else {
@@ -241,6 +243,30 @@ class FrpService : Service() {
             connType == ConnectionType.CONNECTED -> 0xFF2196F3.toInt()
             else -> 0xFF9E9E9E.toInt()
         }
+    }
+
+    /**
+     * 按应用分组统计已连接数量：同一分组（xtcp + stcp）算一个应用，
+     * 组内任一 visitor 已连接（P2P/RELAY）即视为该应用已连接。
+     */
+    private fun connectedAppSummary(apps: Map<String, ConnectionStatus>): Pair<Int, Int> {
+        val groupConnected = mutableSetOf<Long>()
+        val groupIds = mutableSetOf<Long>()
+        var singleTotal = 0
+        var singleConnected = 0
+        for (cfg in appConfigs) {
+            val status = apps[cfg.name]
+            val isConnected = status != null &&
+                (status.type == ConnectionType.P2P || status.type == ConnectionType.RELAY)
+            if (cfg.isInGroup()) {
+                groupIds.add(cfg.groupId)
+                if (isConnected) groupConnected.add(cfg.groupId)
+            } else {
+                singleTotal++
+                if (isConnected) singleConnected++
+            }
+        }
+        return (groupConnected.size + singleConnected) to (groupIds.size + singleTotal)
     }
 
     private fun createNotification(contentText: String, subtitle: String? = null): Notification {
