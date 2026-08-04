@@ -361,13 +361,17 @@ fun ConfigEditScreen(
                 }
             }
             
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Configuration Name *") },
-                placeholder = { Text("e.g., xtcp-visitor") },
-                modifier = Modifier.fillMaxWidth()
-            )
+            // 非 secret 协议（tcp 等）在此命名；secret 协议的名称在下方 Settings 块内
+            AnimatedVisibility(visible = !isSecretProtocol) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Configuration Name *") },
+                    placeholder = { Text("e.g., xtcp-visitor") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
             
             Spacer(modifier = Modifier.height(16.dp))
             
@@ -387,6 +391,18 @@ fun ConfigEditScreen(
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.padding(bottom = 12.dp)
                         )
+                        
+                        // 主配置名（XTCP Name / STCP Name，与 STCP Fallback 的 STCP Name 对应）
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            label = { Text("${protocol.uppercase()} Name") },
+                            placeholder = { Text("e.g., xtcp-visitor") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
                         
                         // 角色选择
                         Text(
