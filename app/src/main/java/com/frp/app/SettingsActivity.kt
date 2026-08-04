@@ -27,6 +27,7 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
+import com.frp.app.data.ConfigGenerator
 import com.frp.app.data.ConfigImportExport
 import com.frp.app.data.ThemeSettingsHolder
 import com.frp.app.manager.TrafficStats
@@ -88,9 +89,9 @@ fun SettingsContent() {
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         result.data?.data?.let { uri ->
-            val json = configImportExport.readConfigFromUri(uri)
-            if (json != null) {
-                val imported = configImportExport.importAll(json)
+            val bytes = configImportExport.readBytesFromUri(uri)
+            if (bytes != null) {
+                val imported = ConfigImportExport.parseImportBytes(bytes)
                 if (imported != null) {
                     // 先恢复 Server 配置，再插入应用配置
                     imported.server?.let { viewModel.saveServerConfig(it) }
@@ -105,20 +106,20 @@ fun SettingsContent() {
     }
     
     // 导出配置 launcher（SAF 创建文档）
-    var pendingExportJson by remember { mutableStateOf<String?>(null) }
+    var pendingExportZip by remember { mutableStateOf<ByteArray?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
+        contract = ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
         uri?.let {
-            pendingExportJson?.let { json ->
-                val success = configImportExport.writeConfigToUri(it, json)
+            pendingExportZip?.let { bytes ->
+                val success = configImportExport.writeBytesToUri(it, bytes)
                 if (success) {
-                    Toast.makeText(context, "Config exported successfully", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Exported backup.zip (json + toml)", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(context, "Failed to export config", Toast.LENGTH_SHORT).show()
                 }
             }
-            pendingExportJson = null
+            pendingExportZip = null
         }
     }
     
@@ -375,8 +376,13 @@ fun SettingsContent() {
                         icon = Icons.Default.FileDownload,
                         onClick = {
                             if (configs.isNotEmpty()) {
-                                pendingExportJson = configImportExport.exportAll(configs, serverConfig)
-                                exportLauncher.launch("frp_configs.json")
+                                // zip 包含：frp_configs.json（server + 应用配置）+ frpc_all.toml（完整配置）
+                                val enabledConfigs = configs.filter { it.enabled }
+                                val toml = serverConfig?.let {
+                                    ConfigGenerator.generateAllConfig(it, enabledConfigs)
+                                } ?: ""
+                                pendingExportZip = ConfigImportExport.buildExportZip(configs, serverConfig, toml)
+                                exportLauncher.launch("frp_backup.zip")
                             } else {
                                 Toast.makeText(context, "No configs to export", Toast.LENGTH_SHORT).show()
                             }
