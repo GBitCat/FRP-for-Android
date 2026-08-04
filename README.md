@@ -214,7 +214,6 @@ FRP-M/
 ## 📞 联系方式
 
 - GitHub: [gbitcat](https://github.com/gbitcat)
-- Email: your-email@example.com
 
 ## 🙏 致谢
 
