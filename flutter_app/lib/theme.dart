@@ -61,14 +61,11 @@ class AppTheme {
         ),
       ),
       cardTheme: CardThemeData(
-        elevation: 0,
-        color: Colors.transparent,
+        elevation: 2,
+        color: scheme.surfaceContainerLow,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(
-            color: isDark ? const Color(0x1AFFFFFF) : cardBorder,
-          ),
         ),
         margin: EdgeInsets.zero,
       ),
@@ -83,19 +80,19 @@ class AppTheme {
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) return scheme.primary;
-          // 关闭状态滑块半透明
-          return Colors.white.withValues(alpha: 0.65);
+          // 关闭状态滑块：普通表面色（白色卡片上可见）
+          return scheme.surface;
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
             return scheme.primary.withValues(alpha: 0.4);
           }
-          // 关闭状态轨道更浅、更透明
-          return Colors.white.withValues(alpha: 0.16);
+          // 关闭状态轨道：浅灰色（白色/深色卡片上均可见）
+          return scheme.onSurface.withValues(alpha: 0.12);
         }),
         trackOutlineColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) return Colors.transparent;
-          return Colors.white.withValues(alpha: 0.25);
+          return scheme.onSurface.withValues(alpha: 0.28);
         }),
       ),
       dividerTheme: DividerThemeData(

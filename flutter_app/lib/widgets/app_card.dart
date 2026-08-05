@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'glass_surface.dart';
-
-/// Liquid Glass 风格卡片：毛玻璃（blur+saturate）+ 高光 + 深度阴影 + 按压动画
+/// 普通风格卡片：Material Card + 点击水波纹
 class AppCard extends StatelessWidget {
   final Widget? leading;
   final String? title;
@@ -47,7 +45,7 @@ class AppCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
-                if (trailing != null) trailing!,
+                ?trailing,
               ],
             ),
             const SizedBox(height: 8),
@@ -56,10 +54,12 @@ class AppCard extends StatelessWidget {
         ],
       ),
     );
-    return GlassSurface(
-      onTap: onTap,
-      radius: 16,
-      child: content,
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: onTap != null
+          ? InkWell(onTap: onTap, child: content)
+          : content,
     );
   }
 }

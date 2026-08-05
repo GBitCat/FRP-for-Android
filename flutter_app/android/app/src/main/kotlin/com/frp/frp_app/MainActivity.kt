@@ -1,5 +1,7 @@
 package com.frp.frp_app
 
+import android.app.ActivityManager
+import android.content.Context
 import android.os.Debug
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
@@ -45,6 +47,10 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                     "getInitialTab" -> result.success(intent?.getIntExtra("initial_tab", -1) ?: -1)
+                    "setExcludeFromRecents" -> {
+                        applyExcludeFromRecents(call.argument<Boolean>("exclude") ?: false)
+                        result.success(true)
+                    }
                     "getVersionName" -> result.success(
                         try {
                             packageManager.getPackageInfo(packageName, 0).versionName
@@ -59,6 +65,18 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        }
+    }
+
+    /** 隐藏/恢复「最近任务」卡片 */
+    private fun applyExcludeFromRecents(exclude: Boolean) {
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            for (task in am.appTasks) {
+                task.setExcludeFromRecents(exclude)
+            }
+        } catch (e: Exception) {
+            // ignore
         }
     }
 

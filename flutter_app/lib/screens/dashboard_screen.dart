@@ -71,7 +71,7 @@ class DashboardScreen extends StatelessWidget {
           slivers: [
             const GlassSliverAppBar(title: 'Dashboard'),
             SliverPadding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 140),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
 

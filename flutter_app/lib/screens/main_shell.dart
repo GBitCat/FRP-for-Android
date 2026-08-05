@@ -3,7 +3,6 @@ import 'package:liquid_glacier/liquid_glacier.dart';
 
 import '../services/frp_engine.dart';
 import '../widgets/frosted_dialog.dart';
-import '../widgets/glass_background.dart';
 import '../widgets/glass_bottom_nav.dart';
 import 'configs_screen.dart';
 import 'dashboard_screen.dart';
@@ -83,12 +82,7 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // 照片背景铺满整屏（含顶部标题区）
-        const Positioned.fill(child: GlassBackground()),
-        Scaffold(
-          backgroundColor: Colors.transparent,
+    return Scaffold(
       floatingActionButton: _selectedTab == 1
           ? LiquidGlassFAB(
               onPressed: () => _showAddConfigMenu(context),
@@ -128,10 +122,7 @@ class _MainShellState extends State<MainShell> {
           return Stack(
             fit: StackFit.expand,
             alignment: Alignment.topLeft,
-            children: [
-              ...previousChildren,
-              ?currentChild,
-            ],
+            children: [...previousChildren, ?currentChild],
           );
         },
         // 干净的全页水平平移（无淡入淡出/缩放，避免回弹感）
@@ -144,17 +135,15 @@ class _MainShellState extends State<MainShell> {
             child: child,
           );
         },
-            child: KeyedSubtree(
-              key: ValueKey(_selectedTab),
-              child: switch (_selectedTab) {
-                0 => const DashboardScreen(),
-                1 => const ConfigsScreen(),
-                _ => const SettingsScreen(),
-              },
-            ),
+        child: KeyedSubtree(
+          key: ValueKey(_selectedTab),
+          child: switch (_selectedTab) {
+            0 => const DashboardScreen(),
+            1 => const ConfigsScreen(),
+            _ => const SettingsScreen(),
+          },
+        ),
       ),
-    ),
-      ],
     );
   }
 }
@@ -203,8 +192,8 @@ class _MenuOption extends StatelessWidget {
                 Text(
                   subtitle,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),

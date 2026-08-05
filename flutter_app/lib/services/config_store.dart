@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/frp_config.dart';
@@ -10,6 +11,9 @@ class ConfigStore {
   static const _kConfigs = 'frp_configs_v2';
   static const _kServer = 'server_config_v2';
   static const _kServers = 'server_configs_v2';
+  static const _kHideFromRecents = 'hide_from_recents';
+  static const _kThemeMode = 'theme_mode';
+  static const _kThemeAccent = 'theme_accent';
 
   static Future<SharedPreferences> _prefs() => SharedPreferences.getInstance();
 
@@ -74,4 +78,33 @@ class ConfigStore {
       jsonEncode(servers.map((e) => e.toJson()).toList()),
     );
   }
+
+  Future<bool> loadHideFromRecents() async =>
+      (await _prefs()).getBool(_kHideFromRecents) ?? false;
+
+  Future<void> saveHideFromRecents(bool v) async =>
+      (await _prefs()).setBool(_kHideFromRecents, v);
+
+  Future<ThemeMode> loadThemeMode() async {
+    final v = (await _prefs()).getString(_kThemeMode);
+    return switch (v) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
+  }
+
+  Future<void> saveThemeMode(ThemeMode mode) async {
+    await (await _prefs()).setString(_kThemeMode, switch (mode) {
+      ThemeMode.light => 'light',
+      ThemeMode.dark => 'dark',
+      _ => 'system',
+    });
+  }
+
+  Future<int> loadThemeAccent() async =>
+      (await _prefs()).getInt(_kThemeAccent) ?? 0;
+
+  Future<void> saveThemeAccent(int accent) async =>
+      (await _prefs()).setInt(_kThemeAccent, accent);
 }

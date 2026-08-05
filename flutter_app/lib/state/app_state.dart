@@ -18,8 +18,10 @@ class ThemeSettings {
   final ThemeMode mode; // system / light / dark
   final int accentIndex;
   const ThemeSettings({this.mode = ThemeMode.system, this.accentIndex = 0});
-  ThemeSettings copyWith({ThemeMode? mode, int? accentIndex}) =>
-      ThemeSettings(mode: mode ?? this.mode, accentIndex: accentIndex ?? this.accentIndex);
+  ThemeSettings copyWith({ThemeMode? mode, int? accentIndex}) => ThemeSettings(
+    mode: mode ?? this.mode,
+    accentIndex: accentIndex ?? this.accentIndex,
+  );
 }
 
 class AppState extends ChangeNotifier {
@@ -33,6 +35,7 @@ class AppState extends ChangeNotifier {
   String _selectedServerId = '';
   String _stunServer = 'stun.easyvoip.com:3478';
   bool trafficEnabled = false;
+  bool hideFromRecents = false;
   ThemeSettings theme = const ThemeSettings();
 
   // 运行状态
@@ -68,6 +71,14 @@ class AppState extends ChangeNotifier {
 
   Future<void> _load() async {
     _resolveStun();
+    hideFromRecents = await _store.loadHideFromRecents();
+    if (hideFromRecents) {
+      engine.setExcludeFromRecents(true);
+    }
+    theme = ThemeSettings(
+      mode: await _store.loadThemeMode(),
+      accentIndex: await _store.loadThemeAccent(),
+    );
     configs = await _store.loadConfigs();
     servers = await _store.loadServers();
     if (servers.isEmpty) {
@@ -98,7 +109,9 @@ class AppState extends ChangeNotifier {
   Future<void> start() async {
     running = true;
     serverStatus = const ConnectionStatus(
-        ConnectionType.unknown, 'Starting...');
+      ConnectionType.unknown,
+      'Starting...',
+    );
     notifyListeners();
     try {
       final dir = await getTemporaryDirectory();
@@ -108,13 +121,17 @@ class AppState extends ChangeNotifier {
       if (!ok) {
         running = false;
         serverStatus = const ConnectionStatus(
-            ConnectionType.error, 'Failed to start frpc');
+          ConnectionType.error,
+          'Failed to start frpc',
+        );
         notifyListeners();
       }
     } catch (_) {
       running = false;
       serverStatus = const ConnectionStatus(
-          ConnectionType.error, 'Failed to start frpc');
+        ConnectionType.error,
+        'Failed to start frpc',
+      );
       notifyListeners();
     }
   }
@@ -140,6 +157,22 @@ class AppState extends ChangeNotifier {
   ServerConfig? get server => servers.isEmpty ? null : selectedServer;
 
   bool isServerSelected(String id) => id == _selectedServerId;
+
+  /// 保存主题设置（模式 + 主色）
+  Future<void> setTheme(ThemeSettings t) async {
+    theme = t;
+    await _store.saveThemeMode(t.mode);
+    await _store.saveThemeAccent(t.accentIndex);
+    notifyListeners();
+  }
+
+  /// 隐藏/恢复最近任务卡片（设置页开关）
+  Future<void> setHideFromRecents(bool v) async {
+    hideFromRecents = v;
+    await _store.saveHideFromRecents(v);
+    await engine.setExcludeFromRecents(v);
+    notifyListeners();
+  }
 
   Future<void> selectServer(String id) async {
     if (servers.any((e) => e.serverId == id)) {
@@ -171,7 +204,9 @@ class AppState extends ChangeNotifier {
   String buildFullToml() {
     final s = effectiveServer;
     final apps = configs
-        .where((c) => c.enabled && (c.serverId.isEmpty || c.serverId == s.serverId))
+        .where(
+          (c) => c.enabled && (c.serverId.isEmpty || c.serverId == s.serverId),
+        )
         .toList();
     return toml
         .generateServerPreview(s, apps)
@@ -197,7 +232,9 @@ class AppState extends ChangeNotifier {
   String generateServerPreview() {
     final s = effectiveServer;
     final apps = configs
-        .where((c) => c.enabled && (c.serverId.isEmpty || c.serverId == s.serverId))
+        .where(
+          (c) => c.enabled && (c.serverId.isEmpty || c.serverId == s.serverId),
+        )
         .toList();
     return toml.generateServerPreview(s, apps);
   }
@@ -234,7 +271,9 @@ class AppState extends ChangeNotifier {
   Future<void> updateConfig(FrpConfig config) async {
     final i = configs.indexWhere((e) => e.id == config.id);
     if (i < 0) return;
-    configs[i] = config.copyWith(updatedAt: DateTime.now().millisecondsSinceEpoch);
+    configs[i] = config.copyWith(
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
     await _store.saveConfigs(configs);
     notifyListeners();
   }
@@ -278,7 +317,9 @@ class AppState extends ChangeNotifier {
   Future<void> syncLinkedStcp(FrpConfig primary) async {
     // 与原有 createLinkedStcpConfig 一致：更新同组 STCP 子配置字段
     if (!primary.useFallback || primary.fallbackTo.isEmpty) return;
-    final stcp = configs.where((e) => e.groupId == primary.groupId && e.protocol == 'stcp').toList();
+    final stcp = configs
+        .where((e) => e.groupId == primary.groupId && e.protocol == 'stcp')
+        .toList();
     final derived = createLinkedStcpConfig(primary);
     for (final e in stcp) {
       final i = configs.indexOf(e);
@@ -294,7 +335,8 @@ class AppState extends ChangeNotifier {
   }
 
   FrpConfig createLinkedStcpConfig(FrpConfig xtcp) {
-    final stcpName = '${xtcp.name.endsWith('-xtcp') ? xtcp.name.substring(0, xtcp.name.length - 5) : xtcp.name}-stcp';
+    final stcpName =
+        '${xtcp.name.endsWith('-xtcp') ? xtcp.name.substring(0, xtcp.name.length - 5) : xtcp.name}-stcp';
     return FrpConfig(
       name: stcpName,
       localIp: xtcp.localIp,
@@ -330,8 +372,13 @@ class AppState extends ChangeNotifier {
     final groupIds = grouped.map((e) => e.groupId).toSet();
     for (final gid in groupIds) {
       final members = grouped.where((e) => e.groupId == gid).toList();
-      final primary = members.firstWhere((e) => e.isGroupPrimary, orElse: () => members.first);
-      final name = primary.groupName.isNotEmpty ? primary.groupName : primary.name;
+      final primary = members.firstWhere(
+        (e) => e.isGroupPrimary,
+        orElse: () => members.first,
+      );
+      final name = primary.groupName.isNotEmpty
+          ? primary.groupName
+          : primary.name;
       final types = members
           .map((e) => appStatuses[e.name])
           .whereType<ConnectionType>()
@@ -387,24 +434,32 @@ extension AppStateGroups on AppState {
     final groupIds = grouped.map((e) => e.groupId).toSet().toList()..sort();
     for (final gid in groupIds) {
       final members = grouped.where((e) => e.groupId == gid).toList();
-      final primary =
-          members.firstWhere((e) => e.isGroupPrimary, orElse: () => members.first);
-      result.add(ConfigGroup(
-        groupId: gid,
-        groupName: primary.groupName.isNotEmpty ? primary.groupName : primary.name,
-        primary: primary,
-        members: members,
-        enabled: members.every((e) => e.enabled),
-      ));
+      final primary = members.firstWhere(
+        (e) => e.isGroupPrimary,
+        orElse: () => members.first,
+      );
+      result.add(
+        ConfigGroup(
+          groupId: gid,
+          groupName: primary.groupName.isNotEmpty
+              ? primary.groupName
+              : primary.name,
+          primary: primary,
+          members: members,
+          enabled: members.every((e) => e.enabled),
+        ),
+      );
     }
     for (final c in configs.where((e) => !e.isInGroup())) {
-      result.add(ConfigGroup(
-        groupId: 0,
-        groupName: c.name,
-        primary: c,
-        members: const [],
-        enabled: c.enabled,
-      ));
+      result.add(
+        ConfigGroup(
+          groupId: 0,
+          groupName: c.name,
+          primary: c,
+          members: const [],
+          enabled: c.enabled,
+        ),
+      );
     }
     return result;
   }
