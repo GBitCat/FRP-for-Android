@@ -93,6 +93,16 @@ class FrpEngine {
     } catch (_) {}
   }
 
+  /// 读取应用版本号（设置页 About 显示）
+  Future<String> getVersionName() async {
+    try {
+      final v = await _channel.invokeMethod<String>('getVersionName');
+      return v ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   /// 读取启动 Intent 的 initial_tab（测试/截图用）
   Future<int> getInitialTab() async {
     try {

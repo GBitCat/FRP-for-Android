@@ -45,6 +45,13 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                     "getInitialTab" -> result.success(intent?.getIntExtra("initial_tab", -1) ?: -1)
+                    "getVersionName" -> result.success(
+                        try {
+                            packageManager.getPackageInfo(packageName, 0).versionName
+                        } catch (e: Exception) {
+                            ""
+                        }
+                    )
                     "getIpv4" -> result.success(getIpv4())
                     "getIpv6" -> result.success(getIpv6())
                     "getMemoryMb" -> result.success(getMemoryMb())
