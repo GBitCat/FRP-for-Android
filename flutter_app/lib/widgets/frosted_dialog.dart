@@ -2,8 +2,6 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
-import 'glass_surface.dart';
-
 /// 统一弹窗：毛玻璃背景（无延迟）+ 居中圆角卡片 + 淡入缩放动画
 /// 点击空白处关闭（barrierDismissible = true 时）
 Future<T?> showFrostedDialog<T>({
@@ -52,11 +50,12 @@ class FrostedScrim extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 弹窗背景：毛玻璃模糊 + 半透明黑
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
         child: Container(
-          color: Colors.black.withValues(alpha: 0.3),
+          color: Colors.black.withValues(alpha: 0.35),
         ),
       ),
     );
@@ -77,8 +76,12 @@ class FrostedCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GlassSurface(
-      radius: 16,
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 8,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: maxWidth),
         child: Padding(padding: padding, child: child),

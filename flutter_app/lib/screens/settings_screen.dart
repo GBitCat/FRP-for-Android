@@ -29,33 +29,39 @@ class SettingsScreen extends StatelessWidget {
 
   Future<void> _importConfig(BuildContext context) async {
     try {
-      final path = await FlutterFileDialog.pickFile(params: OpenFileDialogParams(
-        mimeTypesFilter: ['application/json', 'application/zip'],
-        copyFileToCacheDir: true,
-      ));
+      final path = await FlutterFileDialog.pickFile(
+        params: OpenFileDialogParams(
+          mimeTypesFilter: ['application/json', 'application/zip'],
+          copyFileToCacheDir: true,
+        ),
+      );
       if (path == null || path.isEmpty) return;
       final bytes = await File(path).readAsBytes();
       final data = ConfigImportExport.parseImportBytes(bytes);
       final count = await appState.applyImport(data);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(data == null
-            ? 'Failed to parse config file'
-            : 'Imported $count configurations'),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            data == null
+                ? 'Failed to parse config file'
+                : 'Imported $count configurations',
+          ),
+        ),
+      );
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to import config')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to import config')));
     }
   }
 
   Future<void> _exportConfig(BuildContext context) async {
     if (appState.configs.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No configs to export')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No configs to export')));
       return;
     }
     try {
@@ -66,22 +72,28 @@ class SettingsScreen extends StatelessWidget {
       );
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/frp_backup.zip')..writeAsBytesSync(zip);
-      final saved = await FlutterFileDialog.saveFile(params: SaveFileDialogParams(
-        sourceFilePath: file.path,
-        fileName: 'frp_backup.zip',
-        mimeTypesFilter: ['application/zip'],
-      ));
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(saved != null
-            ? 'Exported backup.zip (json + toml)'
-            : 'Export cancelled'),
-      ));
-    } catch (_) {
+      final saved = await FlutterFileDialog.saveFile(
+        params: SaveFileDialogParams(
+          sourceFilePath: file.path,
+          fileName: 'frp_backup.zip',
+          mimeTypesFilter: ['application/zip'],
+        ),
+      );
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to export config')),
+        SnackBar(
+          content: Text(
+            saved != null
+                ? 'Exported backup.zip (json + toml)'
+                : 'Export cancelled',
+          ),
+        ),
       );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to export config')));
     }
   }
 
@@ -95,158 +107,183 @@ class SettingsScreen extends StatelessWidget {
           slivers: [
             const GlassSliverAppBar(title: 'Settings'),
             SliverPadding(
-              padding: const EdgeInsets.all(16),
+              // 底部留白：避免最后一张卡片（About/Version）被底部导航遮挡
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 140),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-
-            _SectionTitle('General'),
-            AppCard(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.brightness_6_outlined),
-                    title: const Text('Theme mode'),
-                    subtitle: DropdownButtonFormField<ThemeMode>(
-                      initialValue: state.theme.mode,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                            value: ThemeMode.system, child: Text('System')),
-                        DropdownMenuItem(
-                            value: ThemeMode.light, child: Text('Light')),
-                        DropdownMenuItem(
-                            value: ThemeMode.dark, child: Text('Dark')),
-                      ],
-                      onChanged: (m) {
-                        if (m == null) return;
-                        appState.theme = state.theme.copyWith(mode: m);
-                        appState.notify();
-                      },
-                    ),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.palette_outlined),
-                    title: const Text('Theme color'),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Row(
-                        children: List.generate(_accents.length, (i) {
-                          final selected = state.theme.accentIndex == i;
-                          return GestureDetector(
-                            onTap: () {
-                              appState.theme =
-                                  state.theme.copyWith(accentIndex: i);
+                  _SectionTitle('General'),
+                  AppCard(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.brightness_6_outlined),
+                          title: const Text('Theme mode'),
+                          subtitle: DropdownButtonFormField<ThemeMode>(
+                            initialValue: state.theme.mode,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: ThemeMode.system,
+                                child: Text('System'),
+                              ),
+                              DropdownMenuItem(
+                                value: ThemeMode.light,
+                                child: Text('Light'),
+                              ),
+                              DropdownMenuItem(
+                                value: ThemeMode.dark,
+                                child: Text('Dark'),
+                              ),
+                            ],
+                            onChanged: (m) {
+                              if (m == null) return;
+                              appState.setTheme(state.theme.copyWith(mode: m));
+                            },
+                          ),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.palette_outlined),
+                          title: const Text('Theme color'),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Row(
+                              children: List.generate(_accents.length, (i) {
+                                final selected = state.theme.accentIndex == i;
+                                return GestureDetector(
+                                  onTap: () {
+                                    appState.setTheme(
+                                      state.theme.copyWith(accentIndex: i),
+                                    );
+                                  },
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    margin: const EdgeInsets.only(right: 8),
+                                    decoration: BoxDecoration(
+                                      color: _accents[i],
+                                      shape: BoxShape.circle,
+                                      border: selected
+                                          ? Border.all(
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                              width: 2,
+                                            )
+                                          : null,
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        'A',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(color: Colors.white),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ),
+                          ),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.visibility_off),
+                          title: const Text('Hide from recent apps'),
+                          subtitle: const Text(
+                            'App will not appear in the recent apps list',
+                          ),
+                          trailing: Switch(
+                            value: state.hideFromRecents,
+                            onChanged: (v) => state.setHideFromRecents(v),
+                          ),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.data_usage),
+                          title: const Text('Traffic statistics'),
+                          subtitle: const Text(
+                            'Monitor real-time traffic speed (may cost CPU)',
+                          ),
+                          trailing: Switch(
+                            value: state.trafficEnabled,
+                            onChanged: (v) {
+                              appState.trafficEnabled = v;
                               appState.notify();
                             },
-                            child: Container(
-                              width: 32,
-                              height: 32,
-                              margin: const EdgeInsets.only(right: 8),
-                              decoration: BoxDecoration(
-                                color: _accents[i],
-                                shape: BoxShape.circle,
-                                border: selected
-                                    ? Border.all(
-                                        color: Theme.of(context).colorScheme.onSurface,
-                                        width: 2,
-                                      )
-                                    : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+                  _SectionTitle('Logs'),
+                  AppCard(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.history),
+                          title: const Text('Log retention'),
+                          subtitle: const Text('Keep logs for 7 days'),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.list_alt_outlined),
+                          title: const Text('View logs'),
+                          subtitle: const Text('Open frpc log viewer'),
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const LogsScreen(),
                               ),
-                              child: Center(
-                                child: Text(
-                                  'A',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelSmall
-                                      ?.copyWith(color: Colors.white),
-                                ),
-                              ),
-                            ),
-                          );
-                        }),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+                  _SectionTitle('Data'),
+                  AppCard(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.file_upload_outlined),
+                          title: const Text('Import Config'),
+                          subtitle: const Text(
+                            'Import from JSON / zip backup file',
+                          ),
+                          onTap: () => _importConfig(context),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.file_download_outlined),
+                          title: const Text('Export Config'),
+                          subtitle: const Text(
+                            'Export backup.zip (json + toml)',
+                          ),
+                          onTap: () => _exportConfig(context),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+                  _SectionTitle('About'),
+                  AppCard(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: ListTile(
+                      leading: const Icon(Icons.info_outline),
+                      title: const Text('Version'),
+                      subtitle: FutureBuilder<String>(
+                        future: _appVersion,
+                        builder: (context, snap) => Text(snap.data ?? '...'),
                       ),
                     ),
                   ),
-                  ListTile(
-                    leading: const Icon(Icons.data_usage),
-                    title: const Text('Traffic statistics'),
-                    subtitle: const Text(
-                        'Monitor real-time traffic speed (may cost CPU)'),
-                    trailing: Switch(
-                      value: state.trafficEnabled,
-                      onChanged: (v) {
-                        appState.trafficEnabled = v;
-                        appState.notify();
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-            _SectionTitle('Logs'),
-            AppCard(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.history),
-                    title: const Text('Log retention'),
-                    subtitle: const Text('Keep logs for 7 days'),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.list_alt_outlined),
-                    title: const Text('View logs'),
-                    subtitle: const Text('Open frpc log viewer'),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const LogsScreen()),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-            _SectionTitle('Data'),
-            AppCard(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.file_upload_outlined),
-                    title: const Text('Import Config'),
-                    subtitle: const Text('Import from JSON / zip backup file'),
-                    onTap: () => _importConfig(context),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.file_download_outlined),
-                    title: const Text('Export Config'),
-                    subtitle: const Text('Export backup.zip (json + toml)'),
-                    onTap: () => _exportConfig(context),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-            _SectionTitle('About'),
-            AppCard(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text('Version'),
-                subtitle: FutureBuilder<String>(
-                  future: _appVersion,
-                  builder: (context, snap) => Text(snap.data ?? '...'),
-                ),
-              ),
-            ),
                 ]),
               ),
             ),
@@ -265,10 +302,7 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8, left: 4),
-      child: Text(
-        text,
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
+      child: Text(text, style: Theme.of(context).textTheme.titleMedium),
     );
   }
 }

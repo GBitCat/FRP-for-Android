@@ -93,6 +93,14 @@ class FrpEngine {
     } catch (_) {}
   }
 
+  /// 隐藏/恢复最近任务卡片
+  Future<void> setExcludeFromRecents(bool exclude) async {
+    try {
+      await _channel
+          .invokeMethod('setExcludeFromRecents', {'exclude': exclude});
+    } catch (_) {}
+  }
+
   /// 读取应用版本号（设置页 About 显示）
   Future<String> getVersionName() async {
     try {

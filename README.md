@@ -22,12 +22,6 @@
 - ✅ **开机自启**：设备启动时自动运行FRP
 - ✅ **多配置切换**：快速切换不同的代理配置
 
-## 📱 截图
-
-| 仪表盘 | 手动配置 | 切换服务器 |
-| --- | --- | --- |
-| ![Dashboard](docs/screenshots/dashboard.jpg) | ![Manual Config](docs/screenshots/manual_config.jpg) | ![Switch Server](docs/screenshots/switch_server.jpg) |
-
 ## 🚀 快速开始
 
 ### 1. 下载APK
