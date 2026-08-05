@@ -64,24 +64,28 @@ class FrpEngine {
   }
 
   ConnectionType _mapType(String type) => switch (type) {
-        'connected' => ConnectionType.connected,
-        'connecting' => ConnectionType.connecting,
-        'p2p' => ConnectionType.p2p,
-        'relay' => ConnectionType.relay,
-        'error' => ConnectionType.error,
-        _ => ConnectionType.unknown,
-      };
+    'connected' => ConnectionType.connected,
+    'connecting' => ConnectionType.connecting,
+    'p2p' => ConnectionType.p2p,
+    'relay' => ConnectionType.relay,
+    'error' => ConnectionType.error,
+    _ => ConnectionType.unknown,
+  };
 
   /// 启动 frpc，configPath 为 TOML 文件绝对路径
   Future<bool> start(String configPath) async {
     try {
-      final ok = await _channel
-              .invokeMethod<bool>('start', {'configPath': configPath}) ??
+      final ok =
+          await _channel.invokeMethod<bool>('start', {
+            'configPath': configPath,
+          }) ??
           false;
       return ok;
     } catch (_) {
-      _serverStatus =
-          const ConnectionStatus(ConnectionType.error, 'Engine unavailable');
+      _serverStatus = const ConnectionStatus(
+        ConnectionType.error,
+        'Engine unavailable',
+      );
       _statusController.add(_serverStatus);
       return false;
     }
@@ -96,8 +100,9 @@ class FrpEngine {
   /// 隐藏/恢复最近任务卡片
   Future<void> setExcludeFromRecents(bool exclude) async {
     try {
-      await _channel
-          .invokeMethod('setExcludeFromRecents', {'exclude': exclude});
+      await _channel.invokeMethod('setExcludeFromRecents', {
+        'exclude': exclude,
+      });
     } catch (_) {}
   }
 
@@ -137,7 +142,7 @@ class FrpEngine {
     return '';
   }
 
-  /// 应用自身内存（MB）：原生 PSS
+  /// 应用内存占用（MB）：Flutter 进程 RSS + frpc 子进程 RSS（参考 FlClash）
   Future<double> getMemoryMb() async {
     try {
       final v = await _channel.invokeMethod<double>('getMemoryMb');

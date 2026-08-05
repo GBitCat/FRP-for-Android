@@ -2,7 +2,6 @@ package com.frp.frp_app
 
 import android.app.ActivityManager
 import android.content.Context
-import android.os.Debug
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -26,6 +25,7 @@ class MainActivity : FlutterActivity() {
 
     private var channel: MethodChannel? = null
     private var frpcProcess: Process? = null
+    private var frpcPid: Int = -1
     private var readerThread: Thread? = null
     private var monitorThread: Thread? = null
     private val logs = CopyOnWriteArrayList<String>()
@@ -118,6 +118,8 @@ class MainActivity : FlutterActivity() {
             pb.redirectErrorStream(true)
             val process = pb.start()
             frpcProcess = process
+            frpcPid = pidOf(process)
+            Log.d("FrpEngine", "frpc started, pid=$frpcPid")
             logs.clear()
             sendStatus("server", "connecting", "Starting frpc...")
 
@@ -137,6 +139,7 @@ class MainActivity : FlutterActivity() {
                     val code = process.waitFor()
                     if (frpcProcess === process) {
                         frpcProcess = null
+                        frpcPid = -1
                         sendStatus("server", "disconnected", "frpc exited ($code)")
                         sendAppReset()
                     }
@@ -163,6 +166,7 @@ class MainActivity : FlutterActivity() {
             }
         }
         frpcProcess = null
+        frpcPid = -1
         sendStatus("server", "disconnected", "")
         sendAppReset()
     }
@@ -266,9 +270,42 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /// 应用内存占用（参考 FlClash）：
+    /// Flutter 进程 RSS + frpc 子进程 RSS（MB）
     private fun getMemoryMb(): Double {
-        val info = Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }
-        return info.totalPss / 1024.0
+        val appRss = rssMb(android.os.Process.myPid())
+        val frpcRss = if (frpcPid > 0) rssMb(frpcPid) else 0.0
+        val total = appRss + frpcRss
+        Log.d("FrpEngine", "memory: app=${"%.1f".format(appRss)} frpc=$frpcPid:${"%.1f".format(frpcRss)} total=${"%.1f".format(total)}")
+        return total
+    }
+
+    /// 读取 /proc/<pid>/statm 的 resident 页数，换算为 MB
+    private fun rssMb(pid: Int): Double {
+        return try {
+            val statm = File("/proc/$pid/statm").readText().trim().split(Regex("\\s+"))
+            val residentPages = statm.getOrNull(1)?.toLongOrNull() ?: 0L
+            residentPages * 4096.0 / 1024.0 / 1024.0
+        } catch (e: Exception) {
+            0.0
+        }
+    }
+
+    /// 兼容 API < 26 获取 Process pid（反射，避免直接调用 API 26 的 Process.pid()）
+    private fun pidOf(p: Process?): Int {
+        if (p == null) return -1
+        return try {
+            val m = Process::class.java.getMethod("pid")
+            m.invoke(p) as Int
+        } catch (e: Exception) {
+            try {
+                val f = p.javaClass.getDeclaredField("pid")
+                f.isAccessible = true
+                f.getInt(p)
+            } catch (e2: Exception) {
+                -1
+            }
+        }
     }
 
     override fun onDestroy() {

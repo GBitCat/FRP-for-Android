@@ -13,7 +13,9 @@ String configBlock(FrpConfig c) {
     b.writeln('name = "${c.name}"');
     b.writeln('type = "${c.protocol}"');
     b.writeln('serverName = "${c.serverName ?? ''}"');
-    if ((c.secretKey ?? '').isNotEmpty) b.writeln('secretKey = "${c.secretKey}"');
+    if ((c.secretKey ?? '').isNotEmpty) {
+      b.writeln('secretKey = "${c.secretKey}"');
+    }
     if (c.bindPort != -1) b.writeln('bindAddr = "${c.bindAddr}"');
     b.writeln('bindPort = ${c.bindPort}');
     if (c.protocol == 'xtcp') {
@@ -29,7 +31,9 @@ String configBlock(FrpConfig c) {
     b.writeln('type = "${c.protocol}"');
     b.writeln('localIP = "${c.localIp}"');
     b.writeln('localPort = ${c.localPort}');
-    if ((c.secretKey ?? '').isNotEmpty) b.writeln('secretKey = "${c.secretKey}"');
+    if ((c.secretKey ?? '').isNotEmpty) {
+      b.writeln('secretKey = "${c.secretKey}"');
+    }
   } else {
     b.writeln('[[proxies]]');
     b.writeln('name = "${c.name}"');
@@ -41,7 +45,10 @@ String configBlock(FrpConfig c) {
   if (c.useEncryption || c.useCompression) {
     b.writeln();
     b.writeln(
-        c.isVisitor() && c.needsSecretKey() ? '[visitors.transport]' : '[proxies.transport]');
+      c.isVisitor() && c.needsSecretKey()
+          ? '[visitors.transport]'
+          : '[proxies.transport]',
+    );
     b.writeln('useEncryption = ${c.useEncryption}');
     b.writeln('useCompression = ${c.useCompression}');
   }
@@ -60,13 +67,19 @@ String globalBlock(ServerConfig server) {
   b.writeln('transport.tcpMux = ${server.tcpMux}');
   b.writeln('transport.heartbeatInterval = ${server.heartbeatInterval}');
   b.writeln('transport.heartbeatTimeout = ${server.heartbeatTimeout}');
-  b.writeln('transport.tcpMuxKeepaliveInterval = ${server.tcpMuxKeepaliveInterval}');
+  b.writeln(
+    'transport.tcpMuxKeepaliveInterval = ${server.tcpMuxKeepaliveInterval}',
+  );
   b.writeln();
   return b.toString();
 }
 
 /// 单配置完整预览（编辑页用）
-String generateToml(ServerConfig server, FrpConfig config, FrpConfig? linkedConfig) {
+String generateToml(
+  ServerConfig server,
+  FrpConfig config,
+  FrpConfig? linkedConfig,
+) {
   final b = StringBuffer();
   b.write(globalBlock(server));
   if (linkedConfig != null) {
@@ -80,13 +93,21 @@ String generateToml(ServerConfig server, FrpConfig config, FrpConfig? linkedConf
 }
 
 /// Server 配置预览：全局段 + 隶属于该 server 的应用配置拼接
+/// 每个应用块上方加 `# Config: 名称 (协议)` 注释；
+/// 若块本身（如手动编写的配置）已经带有 `# Config:` 注释则不再重复添加。
 String generateServerPreview(ServerConfig server, List<FrpConfig> appConfigs) {
   final b = StringBuffer();
   b.write(globalBlock(server));
   for (var i = 0; i < appConfigs.length; i++) {
     if (i > 0) b.writeln();
-    b.writeln('# Config: ${appConfigs[i].name} (${appConfigs[i].protocol})');
-    b.write(configBlock(appConfigs[i]));
+    final block = configBlock(appConfigs[i]).trimRight();
+    final hasComment = block
+        .split('\n')
+        .any((line) => line.trimLeft().startsWith('# Config:'));
+    if (!hasComment) {
+      b.writeln('# Config: ${appConfigs[i].name} (${appConfigs[i].protocol})');
+    }
+    b.writeln(block);
   }
   return b.toString();
 }

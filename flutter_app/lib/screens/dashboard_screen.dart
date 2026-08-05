@@ -42,9 +42,16 @@ class DashboardScreen extends StatelessWidget {
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 title: Text(s.name.isEmpty ? 'FRPS Server' : s.name),
-                subtitle: Text(s.serverId, style: const TextStyle(fontFamily: 'monospace')),
+                subtitle: Text(
+                  s.serverId,
+                  style: const TextStyle(fontFamily: 'monospace'),
+                ),
                 trailing: selected
-                    ? Icon(Icons.check_circle, size: 20, color: Theme.of(context).colorScheme.primary)
+                    ? Icon(
+                        Icons.check_circle,
+                        size: 20,
+                        color: Theme.of(context).colorScheme.primary,
+                      )
                     : null,
                 onTap: () {
                   state.selectServer(s.serverId);
@@ -74,152 +81,153 @@ class DashboardScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 140),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-
-              // 服务器连接配置卡片
-              AppCard(
-                leading: const Icon(Icons.dns_outlined),
-                title: server.name.isEmpty ? 'FRPS Server' : server.name,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      tooltip: 'Switch server',
-                      onPressed: () => _showServerPicker(context),
-                      icon: const Icon(Icons.swap_horiz, size: 20),
-                    ),
-                    Switch(
-                      value: state.running,
-                      onChanged: (v) => v ? state.start() : state.stop(),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+                  // 服务器连接配置卡片
+                  AppCard(
+                    leading: const Icon(Icons.dns_outlined),
+                    title: server.name.isEmpty ? 'FRPS Server' : server.name,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          state.running
-                              ? Icons.cloud_done_outlined
-                              : Icons.help_outline,
-                          size: 16,
-                          color: state.running
-                              ? const Color(0xFF4CAF50)
-                              : scheme.onSurfaceVariant,
+                        IconButton(
+                          tooltip: 'Switch server',
+                          onPressed: () => _showServerPicker(context),
+                          icon: const Icon(Icons.swap_horiz, size: 20),
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          state.running
-                              ? 'Active'
-                              : '未启动',
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelMedium
-                              ?.copyWith(
-                                color: state.running
-                                    ? const Color(0xFF4CAF50)
-                                    : scheme.onSurfaceVariant,
-                              ),
-                        ),
-                        const SizedBox(width: 12),
-                        Icon(
-                          Icons.swap_horiz,
-                          size: 16,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          state.running ? state.serverStatus.label : '无连接',
-                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
+                        Switch(
+                          value: state.running,
+                          onChanged: (v) => v ? state.start() : state.stop(),
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // IP 与内存卡片并排（强制等高）
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: _IpAddressCard(ipv4: state.ipv4, ipv6: state.ipv6),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(child: _MemoryCard(mb: state.memoryMb)),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // 流量统计卡片
-              if (state.trafficEnabled) ...[
-                _TrafficCard(
-                  upload: state.uploadSpeed,
-                  download: state.downloadSpeed,
-                  total: state.totalBytes,
-                ),
-                const SizedBox(height: 12),
-              ],
-
-              // 各应用连接状态卡片
-              AppCard(
-                leading: const Icon(Icons.apps_outlined),
-                title: 'Applications',
-                child: state.configs.isEmpty
-                    ? Text(
-                        '没有应用',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              state.running
+                                  ? Icons.cloud_done_outlined
+                                  : Icons.help_outline,
+                              size: 16,
+                              color: state.running
+                                  ? const Color(0xFF4CAF50)
+                                  : scheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              state.running ? 'Active' : '未启动',
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(
+                                    color: state.running
+                                        ? const Color(0xFF4CAF50)
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                            ),
+                            const SizedBox(width: 12),
+                            Icon(
+                              Icons.swap_horiz,
+                              size: 16,
                               color: scheme.onSurfaceVariant,
                             ),
-                      )
-                    : ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 108),
-                        child: SingleChildScrollView(
-                          child: Column(
-                            children: state.buildAppRows().map((row) {
-                              final type = row.status;
-                              return Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 6),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        row.name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style:
-                                            Theme.of(context).textTheme.bodyMedium,
-                                      ),
-                                    ),
-                                    StatusDot(_statusColor(context, type)),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      row.label,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelSmall
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.bold,
-                                            color: _statusColor(context, type),
-                                          ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }).toList(),
+                            const SizedBox(width: 6),
+                            Text(
+                              state.running ? state.serverStatus.label : '无连接',
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // IP 与内存卡片并排（强制等高）
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: _IpAddressCard(
+                            ipv4: state.ipv4,
+                            ipv6: state.ipv6,
                           ),
                         ),
-                      ),
-              ),
-              ]),
+                        const SizedBox(width: 12),
+                        Expanded(child: _MemoryCard(mb: state.memoryMb)),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // 流量统计卡片
+                  if (state.trafficEnabled) ...[
+                    _TrafficCard(
+                      upload: state.uploadSpeed,
+                      download: state.downloadSpeed,
+                      total: state.totalBytes,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // 各应用连接状态卡片
+                  AppCard(
+                    leading: const Icon(Icons.apps_outlined),
+                    title: 'Applications',
+                    child: state.configs.isEmpty
+                        ? Text(
+                            '没有应用',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          )
+                        : ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 108),
+                            child: SingleChildScrollView(
+                              child: Column(
+                                children: state.buildAppRows().map((row) {
+                                  final type = row.status;
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 6,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            row.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.bodyMedium,
+                                          ),
+                                        ),
+                                        StatusDot(_statusColor(context, type)),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          row.label,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelSmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.bold,
+                                                color: _statusColor(
+                                                  context,
+                                                  type,
+                                                ),
+                                              ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ),
+                  ),
+                ]),
               ),
             ),
           ],
@@ -248,18 +256,18 @@ class _IpAddressCard extends StatelessWidget {
           Text(
             ipv4.isEmpty ? 'No network connection' : ipv4,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
-                  color: scheme.onSurface,
-                ),
+              fontFamily: 'monospace',
+              color: scheme.onSurface,
+            ),
           ),
           const SizedBox(height: 8),
           Text('IPv6', style: Theme.of(context).textTheme.labelSmall),
           Text(
             ipv6.isEmpty ? 'No network connection' : ipv6,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
-                  color: scheme.onSurface,
-                ),
+              fontFamily: 'monospace',
+              color: scheme.onSurface,
+            ),
           ),
         ],
       ),
@@ -287,14 +295,17 @@ class _MemoryCard extends StatelessWidget {
             children: [
               Text(
                 '${mb.round()} MB',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: scheme.primary,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.headlineSmall?.copyWith(color: scheme.primary),
               ),
               const SizedBox(width: 6),
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
-                child: Text('PSS', style: Theme.of(context).textTheme.labelSmall),
+                child: Text(
+                  'RSS',
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
               ),
             ],
           ),
@@ -302,7 +313,7 @@ class _MemoryCard extends StatelessWidget {
           LinearProgressIndicator(value: heapPercent),
           const SizedBox(height: 4),
           Text(
-            'Heap ${(heapPercent * 100).round()}%',
+            'RSS ${(heapPercent * 100).round()}%',
             style: Theme.of(context).textTheme.labelSmall,
           ),
         ],
@@ -328,9 +339,15 @@ class _TrafficCard extends StatelessWidget {
   }
 
   static String _bytes(double v) {
-    if (v >= 1024 * 1024 * 1024) return '${(v / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
-    if (v >= 1024 * 1024) return '${(v / 1024 / 1024).toStringAsFixed(1)} MB';
-    if (v >= 1024) return '${(v / 1024).toStringAsFixed(1)} KB';
+    if (v >= 1024 * 1024 * 1024) {
+      return '${(v / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
+    }
+    if (v >= 1024 * 1024) {
+      return '${(v / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    if (v >= 1024) {
+      return '${(v / 1024).toStringAsFixed(1)} KB';
+    }
     return '${v.toStringAsFixed(0)} B';
   }
 
@@ -376,9 +393,9 @@ class _TrafficColumn extends StatelessWidget {
         Text(
           value,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: scheme.primary,
-                fontWeight: FontWeight.w600,
-              ),
+            color: scheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         const SizedBox(height: 2),
         Text(label, style: Theme.of(context).textTheme.labelSmall),
