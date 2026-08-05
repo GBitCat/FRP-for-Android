@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../services/config_import_export.dart';
 import '../state/app_state.dart';
 import '../widgets/app_card.dart';
+import '../widgets/glass_sliver_appbar.dart';
 import 'logs_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -86,9 +87,14 @@ class SettingsScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: state,
       builder: (context, _) {
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
+        return CustomScrollView(
+          slivers: [
+            const GlassSliverAppBar(title: 'Settings'),
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate([
+
             _SectionTitle('General'),
             AppCard(
               padding: const EdgeInsets.symmetric(vertical: 4),
@@ -232,6 +238,9 @@ class SettingsScreen extends StatelessWidget {
                 leading: const Icon(Icons.info_outline),
                 title: const Text('Version'),
                 subtitle: const Text('0.1.1'),
+              ),
+            ),
+                ]),
               ),
             ),
           ],

@@ -4,6 +4,7 @@ import 'package:liquid_glacier/liquid_glacier.dart';
 import '../services/frp_engine.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/glass_background.dart';
+import '../widgets/glass_bottom_nav.dart';
 import 'configs_screen.dart';
 import 'dashboard_screen.dart';
 import 'manual_config_edit_screen.dart';
@@ -82,14 +83,12 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
-    const titles = ['Dashboard', 'Configs', 'Settings'];
     return Stack(
       children: [
         // 照片背景铺满整屏（含顶部标题区）
         const Positioned.fill(child: GlassBackground()),
         Scaffold(
           backgroundColor: Colors.transparent,
-          appBar: AppBar(title: Text(titles[_selectedTab])),
       floatingActionButton: _selectedTab == 1
           ? LiquidGlassFAB(
               onPressed: () => _showAddConfigMenu(context),
@@ -97,12 +96,11 @@ class _MainShellState extends State<MainShell> {
               child: const Icon(Icons.add),
             )
           : null,
+      // 内容延伸到导航栏后面，透出被遮挡的设置项（导航栏除胶囊外完全透明）
       extendBody: true,
-      bottomNavigationBar: LiquidGlassBottomNavigationBar(
+      bottomNavigationBar: GlassBottomNavigationBar(
         currentIndex: _selectedTab,
         onTap: (i) => setState(() => _selectedTab = i),
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: Colors.transparent,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.dashboard_outlined),

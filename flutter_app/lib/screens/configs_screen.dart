@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/frp_config.dart';
 import '../models/server_config.dart';
 import '../widgets/frosted_dialog.dart';
+import '../widgets/glass_sliver_appbar.dart';
 import '../state/app_state.dart';
 import '../widgets/app_card.dart';
 import 'config_edit_screen.dart';
@@ -36,88 +37,88 @@ class ConfigsScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: state,
       builder: (context, _) {
-        return Column(
-          children: [
-            // Server 列表（类似 Configurations 的列表结构）
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Servers (${state.servers.length})',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 8),
-                  ...state.servers.map((s) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _ServerListItem(
-                          server: s,
-                          selected: state.isServerSelected(s.serverId),
-                          onSelect: () => state.selectServer(s.serverId),
-                          onPreview: () => _showServerPreview(context),
-                          onEdit: () => _showServerEdit(context, initial: s),
-                          onDelete: () => _confirmDeleteServer(context, s),
-                        ),
-                      )),
-                ],
+        final groups = state.buildGroups();
+        return CustomScrollView(
+          slivers: [
+            const GlassSliverAppBar(title: 'Configs'),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Servers (${state.servers.length})',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    ...state.servers.map((s) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _ServerListItem(
+                            server: s,
+                            selected: state.isServerSelected(s.serverId),
+                            onSelect: () => state.selectServer(s.serverId),
+                            onPreview: () => _showServerPreview(context),
+                            onEdit: () => _showServerEdit(context, initial: s),
+                            onDelete: () => _confirmDeleteServer(context, s),
+                          ),
+                        )),
+                  ],
+                ),
               ),
             ),
-
-            Expanded(
-              child: state.configs.isEmpty
-                  ? const _EmptyConfigs()
-                  : ListenableBuilder(
-                      listenable: state,
-                      builder: (context, _) {
-                        final groups = state.buildGroups();
-                        return ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                          itemCount: groups.length + 1,
-                          itemBuilder: (context, index) {
-                            if (index == 0) {
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: Text(
-                                  'Configurations (${state.configs.length})',
-                                  style: Theme.of(context).textTheme.headlineSmall,
-                                ),
-                              );
-                            }
-                            final group = groups[index - 1];
-                            if (group.isGroup) {
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 10),
-                                child: _ConfigGroupItem(
-                                  group: group,
-                                  onEdit: () =>
-                                      _openEdit(context, configId: group.primary.id),
-                                  onDelete: () => _confirmDeleteGroup(context, group),
-                                  onOptions: () => _showItemMenu(context,
-                                      onEdit: () =>
-                                          _openEdit(context, configId: group.primary.id),
-                                      onDelete: () => _confirmDeleteGroup(context, group)),
-                                ),
-                              );
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: _ConfigItem(
-                                config: group.primary,
+            if (state.configs.isEmpty)
+              const SliverFillRemaining(
+                  hasScrollBody: false, child: _EmptyConfigs())
+            else ...[
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'Configurations (${state.configs.length})',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate(
+                    groups.map((group) {
+                      if (group.isGroup) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _ConfigGroupItem(
+                            group: group,
+                            onEdit: () =>
+                                _openEdit(context, configId: group.primary.id),
+                            onDelete: () => _confirmDeleteGroup(context, group),
+                            onOptions: () => _showItemMenu(context,
                                 onEdit: () =>
                                     _openEdit(context, configId: group.primary.id),
-                                onDelete: () => _confirmDelete(context, group.primary),
-                                onOptions: () => _showItemMenu(context,
-                                    onEdit: () =>
-                                        _openEdit(context, configId: group.primary.id),
-                                    onDelete: () => _confirmDelete(context, group.primary)),
-                              ),
-                            );
-                          },
+                                onDelete: () => _confirmDeleteGroup(context, group)),
+                          ),
                         );
-                      },
-                    ),
-            ),
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _ConfigItem(
+                          config: group.primary,
+                          onEdit: () =>
+                              _openEdit(context, configId: group.primary.id),
+                          onDelete: () => _confirmDelete(context, group.primary),
+                          onOptions: () => _showItemMenu(context,
+                              onEdit: () =>
+                                  _openEdit(context, configId: group.primary.id),
+                              onDelete: () =>
+                                  _confirmDelete(context, group.primary)),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+            ],
           ],
         );
       },
