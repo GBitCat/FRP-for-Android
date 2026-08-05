@@ -31,6 +31,7 @@ class AppState extends ChangeNotifier {
   List<FrpConfig> configs = [];
   List<ServerConfig> servers = [];
   String _selectedServerId = '';
+  String _stunServer = 'stun.easyvoip.com:3478';
   bool trafficEnabled = false;
   ThemeSettings theme = const ThemeSettings();
 
@@ -66,6 +67,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _load() async {
+    _resolveStun();
     configs = await _store.loadConfigs();
     servers = await _store.loadServers();
     if (servers.isEmpty) {
@@ -155,13 +157,28 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 解析 STUN 域名到 IP（release 下原生 InetAddress 补丁可能失效，改在 Dart 层解析）
+  Future<void> _resolveStun() async {
+    try {
+      final list = await InternetAddress.lookup('stun.easyvoip.com');
+      if (list.isNotEmpty) {
+        _stunServer = '${list.first.address}:3478';
+      }
+    } catch (_) {}
+  }
+
   /// 完整 frpc TOML（导出用）：全局段 + 已启用的应用配置
   String buildFullToml() {
     final s = effectiveServer;
     final apps = configs
         .where((c) => c.enabled && (c.serverId.isEmpty || c.serverId == s.serverId))
         .toList();
-    return toml.generateServerPreview(s, apps);
+    return toml
+        .generateServerPreview(s, apps)
+        .replaceAll(
+          'natHoleStunServer = "stun.easyvoip.com:3478"',
+          'natHoleStunServer = "$_stunServer"',
+        );
   }
 
   /// 应用导入结果：覆盖 server（如有）与 configs，返回导入数量
