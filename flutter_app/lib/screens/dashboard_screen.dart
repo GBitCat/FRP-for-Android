@@ -4,6 +4,7 @@ import '../models/connection_status.dart';
 import '../state/app_state.dart';
 import '../widgets/app_card.dart';
 import '../widgets/frosted_dialog.dart';
+import '../widgets/glass_sliver_appbar.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -66,10 +67,14 @@ class DashboardScreen extends StatelessWidget {
         final server = state.effectiveServer;
         final scheme = Theme.of(context).colorScheme;
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
+        return CustomScrollView(
+          slivers: [
+            const GlassSliverAppBar(title: 'Dashboard'),
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate([
+
               // 服务器连接配置卡片
               AppCard(
                 leading: const Icon(Icons.dns_outlined),
@@ -214,8 +219,10 @@ class DashboardScreen extends StatelessWidget {
                         ),
                       ),
               ),
-            ],
-          ),
+              ]),
+              ),
+            ),
+          ],
         );
       },
     );
