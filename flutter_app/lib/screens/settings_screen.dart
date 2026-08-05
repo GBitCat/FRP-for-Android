@@ -5,10 +5,14 @@ import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../services/config_import_export.dart';
+import '../services/frp_engine.dart';
 import '../state/app_state.dart';
 import '../widgets/app_card.dart';
 import '../widgets/glass_sliver_appbar.dart';
 import 'logs_screen.dart';
+
+/// 缓存版本号，避免每次重建都走原生调用
+final Future<String> _appVersion = FrpEngine.instance.getVersionName();
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -237,7 +241,10 @@ class SettingsScreen extends StatelessWidget {
               child: ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: const Text('Version'),
-                subtitle: const Text('0.1.1'),
+                subtitle: FutureBuilder<String>(
+                  future: _appVersion,
+                  builder: (context, snap) => Text(snap.data ?? '...'),
+                ),
               ),
             ),
                 ]),
