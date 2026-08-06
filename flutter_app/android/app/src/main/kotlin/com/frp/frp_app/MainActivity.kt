@@ -1,7 +1,10 @@
 package com.frp.frp_app
 
 import android.app.ActivityManager
+import android.content.Intent
 import android.content.Context
+import android.net.Uri
+import android.provider.Settings
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -62,8 +65,30 @@ class MainActivity : FlutterActivity() {
                     "getIpv6" -> result.success(getIpv6())
                     "getMemoryMb" -> result.success(getMemoryMb())
                     "readLogs" -> result.success(logs.joinToString("\n"))
+                    "requestIgnoreBatteryOptimizations" -> {
+                        requestIgnoreBatteryOptimizations()
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
+            }
+        }
+    }
+
+    /** 引导用户取消本应用的电池优化/省电策略 */
+    private fun requestIgnoreBatteryOptimizations() {
+        try {
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:$packageName"),
+            )
+            startActivity(intent)
+        } catch (e: Exception) {
+            // 部分设备不支持直接请求，退回电池优化设置列表
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (e2: Exception) {
+                // ignore
             }
         }
     }
