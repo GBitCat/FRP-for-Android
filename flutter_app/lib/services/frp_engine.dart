@@ -158,6 +158,15 @@ class FrpEngine {
     } catch (_) {}
   }
 
+  /// 设备实际物理内存（MB）
+  Future<double> getTotalMemoryMb() async {
+    try {
+      final v = await _channel.invokeMethod<double>('getTotalMemoryMb');
+      if (v != null && v > 0) return v;
+    } catch (_) {}
+    return 0;
+  }
+
   Future<String> readLogs() async {
     try {
       final v = await _channel.invokeMethod<String>('readLogs');

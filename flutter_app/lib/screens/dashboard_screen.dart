@@ -155,7 +155,12 @@ class DashboardScreen extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        Expanded(child: _MemoryCard(mb: state.memoryMb)),
+                        Expanded(
+                          child: _MemoryCard(
+                            mb: state.memoryMb,
+                            totalMb: state.totalMemoryMb,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -277,12 +282,14 @@ class _IpAddressCard extends StatelessWidget {
 
 class _MemoryCard extends StatelessWidget {
   final double mb;
-  const _MemoryCard({required this.mb});
+  final double totalMb;
+  const _MemoryCard({required this.mb, required this.totalMb});
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final heapPercent = (mb / 256).clamp(0.0, 1.0);
+    // 进度条上限 = 设备实际物理内存
+    final heapPercent = totalMb > 0 ? (mb / totalMb).clamp(0.0, 1.0) : 0.0;
     return AppCard(
       leading: const Icon(Icons.memory),
       title: 'App Memory',
@@ -313,7 +320,7 @@ class _MemoryCard extends StatelessWidget {
           LinearProgressIndicator(value: heapPercent),
           const SizedBox(height: 4),
           Text(
-            'RSS ${(heapPercent * 100).round()}%',
+            'RAM ${(heapPercent * 100).round()}%',
             style: Theme.of(context).textTheme.labelSmall,
           ),
         ],
