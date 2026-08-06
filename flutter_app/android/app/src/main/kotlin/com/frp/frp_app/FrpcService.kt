@@ -5,8 +5,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -81,9 +85,27 @@ class FrpcService : Service() {
     private var monitorThread: Thread? = null
     private val logs = CopyOnWriteArrayList<String>()
 
+    // 自动恢复相关
+    private var lastStartMs = 0L
+    private var restartPending = false
+    private var healthHandler: Handler? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var networkReceiver: BroadcastReceiver? = null
+
+    private val healthRunnable = object : Runnable {
+        override fun run() {
+            // 定时健康检查兜底：was_running 且 frpc 不在 → 自动拉起
+            restoreIfNeeded()
+            healthHandler?.postDelayed(this, 15_000)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
+        registerNetworkMonitor()
+        healthHandler = Handler(Looper.getMainLooper())
+        healthHandler?.postDelayed(healthRunnable, 15_000)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -100,6 +122,8 @@ class FrpcService : Service() {
 
     override fun onDestroy() {
         instance = null
+        healthHandler?.removeCallbacks(healthRunnable)
+        unregisterNetworkMonitor()
         stopFrpcInternal()
         super.onDestroy()
     }
@@ -112,15 +136,27 @@ class FrpcService : Service() {
     fun isFrpcRunning(): Boolean =
         frpcProcess?.isAlive == true
 
-    /** 上次连接在运行但当前 frpc 未运行 → 自动恢复 */
+    /** 上次连接在运行但当前 frpc 未运行 → 自动恢复（带节流，避免崩溃循环） */
     fun restoreIfNeeded() {
         if (isFrpcRunning()) return
+        if (System.currentTimeMillis() - lastStartMs < 10_000) return
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_WAS_RUNNING, false)) return
         val cfg = prefs.getString(KEY_LAST_CONFIG, null)
         if (!cfg.isNullOrEmpty() && File(cfg).exists()) {
             startFrpc(cfg)
         }
+    }
+
+    /** frpc 意外退出后延迟自动重启（节流：10 秒内不重复启动） */
+    private fun scheduleRestart() {
+        if (restartPending) return
+        if (System.currentTimeMillis() - lastStartMs < 10_000) return
+        restartPending = true
+        Handler(Looper.getMainLooper()).postDelayed({
+            restartPending = false
+            restoreIfNeeded()
+        }, 3_000)
     }
 
     fun startFrpc(configPath: String?): Boolean {
@@ -160,6 +196,7 @@ class FrpcService : Service() {
             val process = pb.start()
             frpcProcess = process
             frpcPid = pidOf(process)
+            lastStartMs = System.currentTimeMillis()
             Log.d("FrpEngine", "frpc started, pid=$frpcPid")
             logs.clear()
             saveRunning(true, configPath)
@@ -183,9 +220,10 @@ class FrpcService : Service() {
                     if (frpcProcess === process) {
                         frpcProcess = null
                         frpcPid = -1
-                        saveRunning(false, null)
+                        // 意外退出：保留 was_running（用户运行意图），延迟自动重启
                         sendStatus("server", "disconnected", "frpc exited ($code)")
                         sendAppReset()
+                        scheduleRestart()
                     }
                 } catch (e: Exception) {
                     // ignore
@@ -232,9 +270,56 @@ class FrpcService : Service() {
         }
         frpcProcess = null
         frpcPid = -1
+        restartPending = false
         saveRunning(false, null)
         sendStatus("server", "disconnected", "")
         sendAppReset()
+    }
+
+    /// 网络变化监听：网络恢复时立即尝试恢复连接
+    private fun registerNetworkMonitor() {
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            if (Build.VERSION.SDK_INT >= 24) {
+                networkCallback = object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        Handler(Looper.getMainLooper()).post {
+                            if (!restartPending) restoreIfNeeded()
+                        }
+                    }
+                }
+                cm.registerDefaultNetworkCallback(networkCallback!!)
+            } else {
+                networkReceiver = object : BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent?) {
+                        Handler(Looper.getMainLooper()).post {
+                            if (!restartPending) restoreIfNeeded()
+                        }
+                    }
+                }
+                @Suppress("DEPRECATION")
+                registerReceiver(
+                    networkReceiver,
+                    IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION)
+                )
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    private fun unregisterNetworkMonitor() {
+        try {
+            networkCallback?.let {
+                getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it)
+            }
+            networkReceiver?.let {
+                @Suppress("DEPRECATION")
+                unregisterReceiver(it)
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
     }
 
     private fun saveRunning(running: Boolean, configPath: String?) {
