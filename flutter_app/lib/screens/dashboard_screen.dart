@@ -85,19 +85,13 @@ class DashboardScreen extends StatelessWidget {
                   AppCard(
                     leading: const Icon(Icons.dns_outlined),
                     title: server.name.isEmpty ? 'FRPS Server' : server.name,
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          tooltip: 'Switch server',
-                          onPressed: () => _showServerPicker(context),
-                          icon: const Icon(Icons.swap_horiz, size: 20),
-                        ),
-                        Switch(
-                          value: state.running,
-                          onChanged: (v) => v ? state.start() : state.stop(),
-                        ),
-                      ],
+                    trailing: IconButton(
+                      tooltip: 'Switch server',
+                      onPressed: () => _showServerPicker(context),
+                      icon: const Icon(Icons.swap_horiz, size: 20),
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -115,7 +109,7 @@ class DashboardScreen extends StatelessWidget {
                             ),
                             const SizedBox(width: 6),
                             Text(
-                              state.running ? 'Active' : '未启动',
+                              state.running ? 'Active' : 'Inactive',
                               style: Theme.of(context).textTheme.labelMedium
                                   ?.copyWith(
                                     color: state.running
@@ -130,10 +124,22 @@ class DashboardScreen extends StatelessWidget {
                               color: scheme.onSurfaceVariant,
                             ),
                             const SizedBox(width: 6),
-                            Text(
-                              state.running ? state.serverStatus.label : '无连接',
-                              style: Theme.of(context).textTheme.labelMedium
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            Expanded(
+                              child: Text(
+                                state.running
+                                    ? state.serverStatus.label
+                                    : 'No connection',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.labelMedium
+                                    ?.copyWith(color: scheme.onSurfaceVariant),
+                              ),
+                            ),
+                            const Spacer(),
+                            Switch(
+                              value: state.running,
+                              onChanged: (v) =>
+                                  v ? state.start() : state.stop(),
                             ),
                           ],
                         ),
@@ -183,7 +189,7 @@ class DashboardScreen extends StatelessWidget {
                     title: 'Applications',
                     child: state.configs.isEmpty
                         ? Text(
-                            '没有应用',
+                            'No apps',
                             style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(color: scheme.onSurfaceVariant),
                           )
