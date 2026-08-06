@@ -69,13 +69,15 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
-        // 挂载状态推送通道（服务持有，Activity 存活期间推送）
-        FrpcService.instance?.channel = channel
+        // 挂载状态推送通道（服务持有，Activity 存活期间推送），并重放当前状态
+        FrpcService.channel = channel
+        FrpcService.instance?.syncToChannel()
     }
 
     override fun onStart() {
         super.onStart()
-        FrpcService.instance?.channel = channel
+        FrpcService.channel = channel
+        FrpcService.instance?.syncToChannel()
         // 健康检查后按需启动：服务/frpc 正常时不重复 start（避免回 App 时重启 frpc 断连）
         FrpcService.ensureRunning(this)
         // Android 13+：请求通知权限（前台服务通知需要）
@@ -89,7 +91,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         // 不停 frpc：进程由 FrpcService 托管，Activity 销毁不影响后台连接
-        FrpcService.instance?.channel = null
+        FrpcService.channel = null
         super.onDestroy()
     }
 
