@@ -46,6 +46,9 @@ class AppState extends ChangeNotifier {
   ConnectionStatus serverStatus = const ConnectionStatus();
   Map<String, ConnectionType> appStatuses = {};
   double memoryMb = 0;
+
+  /// 设备实际物理内存（MB），作为 RSS 进度条上限
+  double totalMemoryMb = 0;
   String ipv4 = '';
   String ipv6 = '';
   double uploadSpeed = 0;
@@ -101,6 +104,9 @@ class AppState extends ChangeNotifier {
 
   void _startPolling() {
     Timer.periodic(const Duration(seconds: 2), (_) async {
+      if (totalMemoryMb <= 0) {
+        totalMemoryMb = await engine.getTotalMemoryMb();
+      }
       memoryMb = await engine.getMemoryMb();
       ipv4 = await engine.getIpv4();
       ipv6 = await engine.getIpv6();
