@@ -25,11 +25,20 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            // 固定 release 签名：仓库内置 keystore，保证每次 CI 构建签名一致，
+            // 覆盖安装（adb install -r）不要求卸载重装。
+            storeFile = file("release.keystore")
+            storePassword = System.getenv("REMOVED_RELEASE_STORE_PASSWORD")
+            keyAlias = System.getenv("REMOVED_RELEASE_KEY_ALIAS")
+            keyPassword = System.getenv("REMOVED_RELEASE_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
