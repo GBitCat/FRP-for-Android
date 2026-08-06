@@ -25,7 +25,7 @@
 ## 🚀 快速开始
 
 ### 1. 下载APK
-从 [Releases](https://github.com/gbitcat/FRP-M/releases) 页面下载最新版本的APK文件。
+从 [Releases](https://github.com/GBitCat/FRP-for-Android/releases) 页面下载最新版本的APK文件。
 
 ### 2. 安装应用
 ```bash
@@ -55,8 +55,8 @@ adb install frp-android.apk
 
 1. **克隆项目**
 ```bash
-git clone https://github.com/gbitcat/FRP-M.git
-cd FRP-M
+git clone https://github.com/GBitCat/FRP-for-Android.git
+cd FRP-for-Android
 ```
 
 2. **下载frpc二进制文件**
@@ -77,7 +77,7 @@ cd FRP-M
 ## 📁 项目结构
 
 ```
-FRP-M/
+FRP-for-Android/
 ├── app/
 │   └── src/main/java/com/frp/app/
 │       ├── data/           # 数据层
@@ -190,7 +190,7 @@ FRP-M/
 欢迎贡献代码！请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详情。
 
 ### 贡献者
-- [gbitcat](https://github.com/gbitcat)
+- [GBitCat](https://github.com/GBitCat)
 
 ## 📄 许可证
 
@@ -204,7 +204,7 @@ FRP-M/
 
 ## 📞 联系方式
 
-- GitHub: [gbitcat](https://github.com/gbitcat)
+- GitHub: [GBitCat](https://github.com/GBitCat)
 
 ## 🙏 致谢
 
