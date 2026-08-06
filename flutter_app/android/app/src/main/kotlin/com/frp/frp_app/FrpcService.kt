@@ -44,11 +44,30 @@ class FrpcService : Service() {
                 context.startService(intent)
             }
         }
+
+        /**
+         * 健康检查后按需启动：
+         * - 服务不存在：仅当上次连接在运行（was_running）时才冷启动恢复
+         * - 服务存在但 frpc 进程异常退出：自动重启 frpc
+         * - 服务与 frpc 均正常：不做任何事（避免回到 App 时重启 frpc 导致断连）
+         */
+        fun ensureRunning(context: Context) {
+            val svc = instance
+            if (svc == null) {
+                val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                if (prefs.getBoolean(KEY_WAS_RUNNING, false)) {
+                    start(context)
+                }
+            } else {
+                svc.restoreIfNeeded()
+            }
+        }
     }
 
     /** 由 MainActivity 挂载；Activity 销毁后置空（Dart 端不在时无需推送） */
     var channel: MethodChannel? = null
 
+    private var restored = false
     private var frpcProcess: Process? = null
     private var frpcPid: Int = -1
     private var readerThread: Thread? = null
@@ -63,13 +82,11 @@ class FrpcService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createChannel()
         startForeground(NOTIF_ID, buildNotification("FRPC 正在运行"))
-        // 开机自启 / 进程重建：上次连接在运行则自动恢复
-        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        if (prefs.getBoolean(KEY_WAS_RUNNING, false)) {
-            val cfg = prefs.getString(KEY_LAST_CONFIG, null)
-            if (!cfg.isNullOrEmpty() && File(cfg).exists()) {
-                startFrpc(cfg)
-            }
+        // 开机自启 / 进程重建：仅在冷启动时自动恢复一次。
+        // 重复 start（如每次回到 App）不得重启 frpc，否则会造成连接瞬间断开。
+        if (!restored) {
+            restored = true
+            restoreIfNeeded()
         }
         return START_STICKY
     }
@@ -83,6 +100,21 @@ class FrpcService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     // ---- 对外接口（MainActivity 调用） ----
+
+    /** frpc 进程是否存活 */
+    fun isFrpcRunning(): Boolean =
+        frpcProcess?.isAlive == true
+
+    /** 上次连接在运行但当前 frpc 未运行 → 自动恢复 */
+    fun restoreIfNeeded() {
+        if (isFrpcRunning()) return
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_WAS_RUNNING, false)) return
+        val cfg = prefs.getString(KEY_LAST_CONFIG, null)
+        if (!cfg.isNullOrEmpty() && File(cfg).exists()) {
+            startFrpc(cfg)
+        }
+    }
 
     fun startFrpc(configPath: String?): Boolean {
         stopFrpcInternal()
