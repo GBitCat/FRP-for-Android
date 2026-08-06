@@ -36,6 +36,13 @@ class FrpcService : Service() {
         @Volatile
         var instance: FrpcService? = null
 
+        /**
+         * 静态状态推送通道：由 MainActivity 挂载。
+         * 与服务的启动时序解耦——服务启动前/后设置都有效，避免推送丢失。
+         */
+        @Volatile
+        var channel: MethodChannel? = null
+
         fun start(context: Context) {
             val intent = Intent(context, FrpcService::class.java)
             if (Build.VERSION.SDK_INT >= 26) {
@@ -64,10 +71,10 @@ class FrpcService : Service() {
         }
     }
 
-    /** 由 MainActivity 挂载；Activity 销毁后置空（Dart 端不在时无需推送） */
-    var channel: MethodChannel? = null
-
     private var restored = false
+    // 当前状态快照：channel 挂载后重放，避免后台连接期间推送丢失导致仪表盘不同步
+    private var serverStatus: Pair<String, String>? = null
+    private val appStatuses = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var frpcProcess: Process? = null
     private var frpcPid: Int = -1
     private var readerThread: Thread? = null
@@ -281,6 +288,9 @@ class FrpcService : Service() {
     }
 
     private fun sendStatus(scope: String, type: String, detail: String) {
+        if (scope == "server") {
+            serverStatus = type to detail
+        }
         val ch = channel ?: return
         Handler(Looper.getMainLooper()).post {
             try {
@@ -296,6 +306,7 @@ class FrpcService : Service() {
 
     private fun sendAppStatus(name: String, type: String) {
         if (name.isBlank()) return
+        appStatuses[name] = type
         val ch = channel ?: return
         Handler(Looper.getMainLooper()).post {
             try {
@@ -306,10 +317,30 @@ class FrpcService : Service() {
     }
 
     private fun sendAppReset() {
+        appStatuses.clear()
         val ch = channel ?: return
         Handler(Looper.getMainLooper()).post {
             try {
                 ch.invokeMethod("onAppStatus", mapOf("name" to "", "type" to "reset"))
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    /** channel 挂载后重放当前状态，保证仪表盘与后台实际连接同步 */
+    fun syncToChannel() {
+        val ch = channel ?: return
+        Handler(Looper.getMainLooper()).post {
+            try {
+                serverStatus?.let { (type, detail) ->
+                    ch.invokeMethod(
+                        "onStatus",
+                        mapOf("scope" to "server", "type" to type, "detail" to detail)
+                    )
+                }
+                appStatuses.forEach { (name, type) ->
+                    ch.invokeMethod("onAppStatus", mapOf("name" to name, "type" to type))
+                }
             } catch (e: Exception) {
             }
         }
