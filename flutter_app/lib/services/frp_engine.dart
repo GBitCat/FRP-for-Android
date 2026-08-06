@@ -151,6 +151,13 @@ class FrpEngine {
     return 0;
   }
 
+  /// 引导用户取消本应用的电池优化/省电策略
+  Future<void> requestIgnoreBatteryOptimizations() async {
+    try {
+      await _channel.invokeMethod('requestIgnoreBatteryOptimizations');
+    } catch (_) {}
+  }
+
   Future<String> readLogs() async {
     try {
       final v = await _channel.invokeMethod<String>('readLogs');

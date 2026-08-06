@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:liquid_glacier/liquid_glacier.dart';
 
+import '../state/app_state.dart';
 import '../services/frp_engine.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/glass_bottom_nav.dart';
@@ -28,6 +29,82 @@ class _MainShellState extends State<MainShell> {
         setState(() => _selectedTab = t);
       }
     });
+    // 首次启动：提醒取消本应用的省电策略（只提醒一次）。
+    // _load 是异步的，监听 AppState 变化确保标记就绪后弹出。
+    appState.addListener(_onAppStateChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && appState.batteryHintPending) {
+        _consumeBatteryHint();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    appState.removeListener(_onAppStateChanged);
+    super.dispose();
+  }
+
+  void _onAppStateChanged() {
+    if (mounted && appState.batteryHintPending) {
+      _consumeBatteryHint();
+    }
+  }
+
+  void _consumeBatteryHint() {
+    appState.batteryHintPending = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showBatteryHint();
+    });
+  }
+
+  /// 省电策略提醒弹窗
+  void _showBatteryHint() {
+    showFrostedDialog<void>(
+      context: context,
+      builder: (dialogContext) => FrostedCard(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.battery_saver_outlined,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text('省电策略提醒', style: Theme.of(context).textTheme.titleSmall),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '为保证 frpc 在后台稳定运行（STCP/XTCP 连接不掉线），'
+              '建议取消本应用的省电策略 / 电池优化限制。',
+              style: TextStyle(height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('知道了'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    FrpEngine.instance.requestIgnoreBatteryOptimizations();
+                  },
+                  child: const Text('去设置'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// + 按钮：统一 FlClash 风格悬浮选项（毛玻璃 + 居中卡片）

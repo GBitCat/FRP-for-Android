@@ -24,7 +24,7 @@ class GlassBottomNavigationBar extends StatefulWidget {
 }
 
 class _GlassBottomNavigationBarState extends State<GlassBottomNavigationBar> {
-  static const double _barHeight = 84;
+  static const double _barHeight = 76;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +33,7 @@ class _GlassBottomNavigationBarState extends State<GlassBottomNavigationBar> {
     // 折射：背景轻微放大，模拟透过玻璃的扭曲效果
     const refraction = 1.03;
     final glassFilter = ImageFilter.compose(
-      outer: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+      outer: ImageFilter.blur(sigmaX: 3, sigmaY: 3),
       inner: ImageFilter.matrix(
         Float64List.fromList([
           refraction, 0, 0, 0, //
@@ -55,7 +55,7 @@ class _GlassBottomNavigationBarState extends State<GlassBottomNavigationBar> {
             // 会模糊整个矩形区域，导致玻璃带外面多出一层模糊。
             Positioned.fill(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 16),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(24),
                   child: BackdropFilter(
@@ -114,14 +114,14 @@ class _GlassBottomNavigationBarState extends State<GlassBottomNavigationBar> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         IconTheme(
-                          data: IconThemeData(color: color, size: 24),
+                          data: IconThemeData(color: color, size: 20),
                           child: selected ? item.activeIcon : item.icon,
                         ),
-                        const SizedBox(height: 2),
+                        const SizedBox(height: 1),
                         Text(
                           item.label ?? '',
                           style: TextStyle(
-                            fontSize: selected ? 13 : 11,
+                            fontSize: selected ? 11 : 10,
                             fontWeight: selected
                                 ? FontWeight.w600
                                 : FontWeight.w400,

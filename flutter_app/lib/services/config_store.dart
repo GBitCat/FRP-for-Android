@@ -14,6 +14,7 @@ class ConfigStore {
   static const _kHideFromRecents = 'hide_from_recents';
   static const _kThemeMode = 'theme_mode';
   static const _kThemeAccent = 'theme_accent';
+  static const _kBatteryHintShown = 'battery_hint_shown';
 
   static Future<SharedPreferences> _prefs() => SharedPreferences.getInstance();
 
@@ -101,6 +102,12 @@ class ConfigStore {
       _ => 'system',
     });
   }
+
+  Future<bool> loadBatteryHintShown() async =>
+      (await _prefs()).getBool(_kBatteryHintShown) ?? false;
+
+  Future<void> saveBatteryHintShown(bool v) async =>
+      (await _prefs()).setBool(_kBatteryHintShown, v);
 
   Future<int> loadThemeAccent() async =>
       (await _prefs()).getInt(_kThemeAccent) ?? 0;

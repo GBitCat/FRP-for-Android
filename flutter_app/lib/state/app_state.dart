@@ -36,6 +36,9 @@ class AppState extends ChangeNotifier {
   String _stunServer = 'stun.easyvoip.com:3478';
   bool trafficEnabled = false;
   bool hideFromRecents = false;
+
+  /// 首次启动待弹出的省电策略提醒
+  bool batteryHintPending = false;
   ThemeSettings theme = const ThemeSettings();
 
   // 运行状态
@@ -74,6 +77,11 @@ class AppState extends ChangeNotifier {
     hideFromRecents = await _store.loadHideFromRecents();
     if (hideFromRecents) {
       engine.setExcludeFromRecents(true);
+    }
+    // 首次启动：标记省电策略提醒（只提醒一次）
+    if (!await _store.loadBatteryHintShown()) {
+      await _store.saveBatteryHintShown(true);
+      batteryHintPending = true;
     }
     theme = ThemeSettings(
       mode: await _store.loadThemeMode(),
