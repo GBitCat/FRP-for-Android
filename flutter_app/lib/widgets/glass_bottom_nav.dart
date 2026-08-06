@@ -25,6 +25,7 @@ class GlassBottomNavigationBar extends StatefulWidget {
 
 class _GlassBottomNavigationBarState extends State<GlassBottomNavigationBar> {
   static const double _barHeight = 76;
+  static const double _glassHMargin = 81;
 
   @override
   Widget build(BuildContext context) {
@@ -55,7 +56,12 @@ class _GlassBottomNavigationBarState extends State<GlassBottomNavigationBar> {
             // 会模糊整个矩形区域，导致玻璃带外面多出一层模糊。
             Positioned.fill(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 14, 12, 16),
+                padding: const EdgeInsets.fromLTRB(
+                  _glassHMargin,
+                  14,
+                  _glassHMargin,
+                  16,
+                ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(24),
                   child: BackdropFilter(
@@ -98,41 +104,44 @@ class _GlassBottomNavigationBarState extends State<GlassBottomNavigationBar> {
                 ),
               ),
             ),
-            // 选项（图标 + 标签）
-            Row(
-              children: List.generate(widget.items.length, (i) {
-                final item = widget.items[i];
-                final selected = widget.currentIndex == i;
-                final color = selected
-                    ? (isDark ? Colors.white : scheme.primary)
-                    : scheme.onSurfaceVariant;
-                return Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => widget.onTap(i),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconTheme(
-                          data: IconThemeData(color: color, size: 20),
-                          child: selected ? item.activeIcon : item.icon,
-                        ),
-                        const SizedBox(height: 1),
-                        Text(
-                          item.label ?? '',
-                          style: TextStyle(
-                            fontSize: selected ? 11 : 10,
-                            fontWeight: selected
-                                ? FontWeight.w600
-                                : FontWeight.w400,
-                            color: color,
+            // 选项（图标 + 标签）：与玻璃带同宽，紧凑排列在玻璃带内
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: _glassHMargin),
+              child: Row(
+                children: List.generate(widget.items.length, (i) {
+                  final item = widget.items[i];
+                  final selected = widget.currentIndex == i;
+                  final color = selected
+                      ? (isDark ? Colors.white : scheme.primary)
+                      : scheme.onSurfaceVariant;
+                  return Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => widget.onTap(i),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          IconTheme(
+                            data: IconThemeData(color: color, size: 20),
+                            child: selected ? item.activeIcon : item.icon,
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 1),
+                          Text(
+                            item.label ?? '',
+                            style: TextStyle(
+                              fontSize: selected ? 11 : 10,
+                              fontWeight: selected
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: color,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                );
-              }),
+                  );
+                }),
+              ),
             ),
           ],
         ),
