@@ -76,8 +76,8 @@ class MainActivity : FlutterActivity() {
     override fun onStart() {
         super.onStart()
         FrpcService.instance?.channel = channel
-        // 确保前台服务在跑（用户启动连接后由 start 拉起；这里兜底）
-        FrpcService.start(this)
+        // 健康检查后按需启动：服务/frpc 正常时不重复 start（避免回 App 时重启 frpc 断连）
+        FrpcService.ensureRunning(this)
         // Android 13+：请求通知权限（前台服务通知需要）
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
