@@ -1,0 +1,8 @@
+.git
+.github
+**/build
+**/.dart_tool
+**/.gradle
+**/.idea
+**/*.iml
+downloads

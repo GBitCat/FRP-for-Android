@@ -60,9 +60,9 @@ class _LogsScreenState extends State<LogsScreen> {
 
   void _copyAll() {
     Clipboard.setData(ClipboardData(text: _logs.join('\n')));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Logs copied to clipboard')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Logs copied to clipboard')));
   }
 
   @override
@@ -70,7 +70,9 @@ class _LogsScreenState extends State<LogsScreen> {
     final scheme = Theme.of(context).colorScheme;
     final visible = _filter.isEmpty
         ? _logs
-        : _logs.where((e) => e.toLowerCase().contains(_filter.toLowerCase())).toList();
+        : _logs
+              .where((e) => e.toLowerCase().contains(_filter.toLowerCase()))
+              .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -112,9 +114,16 @@ class _LogsScreenState extends State<LogsScreen> {
           Row(
             children: [
               const SizedBox(width: 16),
-              Icon(Icons.vertical_align_bottom, size: 16, color: scheme.onSurfaceVariant),
+              Icon(
+                Icons.vertical_align_bottom,
+                size: 16,
+                color: scheme.onSurfaceVariant,
+              ),
               const SizedBox(width: 4),
-              Text('Auto-scroll', style: Theme.of(context).textTheme.labelSmall),
+              Text(
+                'Auto-scroll',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
               Switch(
                 value: _autoScroll,
                 onChanged: (v) => setState(() {
@@ -136,8 +145,8 @@ class _LogsScreenState extends State<LogsScreen> {
                     child: Text(
                       _logs.isEmpty ? 'No logs yet' : 'No matching logs',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   )
                 : ListView.builder(
@@ -168,7 +177,9 @@ class _LogsScreenState extends State<LogsScreen> {
 
   Color _lineColor(ColorScheme scheme, String line) {
     final l = line.toLowerCase();
-    if (l.contains('error') || l.contains('failed') || l.contains("doesn't exist")) {
+    if (l.contains('error') ||
+        l.contains('failed') ||
+        l.contains("doesn't exist")) {
       return const Color(0xFFF44336);
     }
     if (l.contains('success') || l.contains('established')) {

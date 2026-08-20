@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../models/frp_config.dart';
 import '../state/app_state.dart';
 
-
 /// 手动编写配置：顶部保留 Server ID 选择 + 分组命名，下方为 TOML 编写区域
 class ManualConfigEditScreen extends StatefulWidget {
   final int? configId;
@@ -24,7 +23,8 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
   final _groupNameCtrl = TextEditingController();
   final _tomlCtrl = TextEditingController();
 
-  static const _template = '# \u8fd9\u91cc\u624b\u52a8\u7f16\u5199 frpc \u914d\u7f6e\uff08[[proxies]] / [[visitors]] \u5757\uff09\n'
+  static const _template =
+      '# \u8fd9\u91cc\u624b\u52a8\u7f16\u5199 frpc \u914d\u7f6e\uff08[[proxies]] / [[visitors]] \u5757\uff09\n'
       '# \u793a\u4f8b\uff1a\n'
       '# [[visitors]]\n'
       '# name = "my_xtcp"\n'
@@ -45,10 +45,14 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     super.initState();
     _serverId = appState.effectiveServer.serverId;
     if (_isEditing) {
-      final cfg = appState.configs.where((e) => e.id == widget.configId).firstOrNull;
+      final cfg = appState.configs
+          .where((e) => e.id == widget.configId)
+          .firstOrNull;
       if (cfg != null) {
         _original = cfg;
-        _serverId = cfg.serverId.isEmpty ? appState.effectiveServer.serverId : cfg.serverId;
+        _serverId = cfg.serverId.isEmpty
+            ? appState.effectiveServer.serverId
+            : cfg.serverId;
         _groupName = cfg.groupName;
         _toml = cfg.manualToml ?? '';
       }
@@ -81,8 +85,9 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
   /// 为每个 visitors/proxies 块上方添加 # Config: "分组名" (type) 注释（幂等）
   String _addConfigComments(String toml) {
     final lines = toml.split('\n');
-    final groupLabel =
-        _groupName.trim().isEmpty ? _deriveName() : _groupName.trim();
+    final groupLabel = _groupName.trim().isEmpty
+        ? _deriveName()
+        : _groupName.trim();
     final out = <String>[];
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
@@ -124,9 +129,9 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
 
   Future<void> _save() async {
     if (_toml.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Config content is empty')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Config content is empty')));
       return;
     }
     final state = appState;
@@ -135,35 +140,43 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     final type = _detectType();
     final finalToml = _addConfigComments(_toml);
     if (_isEditing && _original != null) {
-      await state.updateConfig(_original!.copyWith(
-        name: name,
-        protocol: type,
-        groupName: _groupName,
-        serverId: _serverId.isEmpty ? appState.effectiveServer.serverId : _serverId,
-        manualToml: finalToml,
-        updatedAt: now,
-      ));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Configuration updated')),
+      await state.updateConfig(
+        _original!.copyWith(
+          name: name,
+          protocol: type,
+          groupName: _groupName,
+          serverId: _serverId.isEmpty
+              ? appState.effectiveServer.serverId
+              : _serverId,
+          manualToml: finalToml,
+          updatedAt: now,
+        ),
       );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Configuration updated')));
     } else {
-      await state.addConfig(FrpConfig(
-        name: name,
-        protocol: type,
-        role: 'visitor',
-        localPort: 0,
-        manualToml: finalToml,
-        groupName: _groupName,
-        serverId: _serverId.isEmpty ? appState.effectiveServer.serverId : _serverId,
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-      ));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Configuration added')),
+      await state.addConfig(
+        FrpConfig(
+          name: name,
+          protocol: type,
+          role: 'visitor',
+          localPort: 0,
+          manualToml: finalToml,
+          groupName: _groupName,
+          serverId: _serverId.isEmpty
+              ? appState.effectiveServer.serverId
+              : _serverId,
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        ),
       );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Configuration added')));
     }
     if (mounted) Navigator.pop(context);
   }
@@ -181,9 +194,7 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_isEditing ? 'Edit Manual Config' : 'Manual Config'),
-        actions: [
-          TextButton(onPressed: _save, child: const Text('Save')),
-        ],
+        actions: [TextButton(onPressed: _save, child: const Text('Save'))],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -195,62 +206,77 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Basic Information', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            // Server ID \u9009\u62e9
-            DropdownButtonFormField<String>(
-              initialValue: _serverId,
-              decoration: _dec('Belongs to Server'),
-              items: appState.servers
-                  .map((sv) => DropdownMenuItem(
-                        value: sv.serverId,
-                        child: Text(
-                          '${sv.name.isEmpty ? "FRPS Server" : sv.name} (${sv.serverId})',
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Basic Information',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                // Server ID \u9009\u62e9
+                DropdownButtonFormField<String>(
+                  initialValue: _serverId,
+                  decoration: _dec('Belongs to Server'),
+                  items: appState.servers
+                      .map(
+                        (sv) => DropdownMenuItem(
+                          value: sv.serverId,
+                          child: Text(
+                            '${sv.name.isEmpty ? "FRPS Server" : sv.name} (${sv.serverId})',
+                          ),
                         ),
-                      ))
-                  .toList(),
-              onChanged: (v) => setState(() => _serverId = v ?? ''),
-            ),
-            const SizedBox(height: 12),
-            // \u5206\u7ec4\u547d\u540d
-            TextField(
-              controller: _groupNameCtrl,
-              onChanged: (v) => setState(() => _groupName = v),
-              decoration: _dec('Group Name', hint: 'Optional group for this config'),
-            ),
-            const SizedBox(height: 16),
-            // \u624b\u52a8\u7f16\u5199\u533a\u57df
-            Text('Config Content', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Expanded(
-              flex: 9,
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
+                      )
+                      .toList(),
+                  onChanged: (v) => setState(() => _serverId = v ?? ''),
                 ),
-                child: TextField(
-                  controller: _tomlCtrl,
-                  onChanged: (v) => setState(() => _toml = v),
-                  maxLines: null,
-                  expands: true,
-                  textAlignVertical: TextAlignVertical.top,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                  decoration: const InputDecoration(
-                    hintText: '# \u5728\u6b64\u7f16\u5199 frpc \u914d\u7f6e...',
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.all(12),
+                const SizedBox(height: 12),
+                // \u5206\u7ec4\u547d\u540d
+                TextField(
+                  controller: _groupNameCtrl,
+                  onChanged: (v) => setState(() => _groupName = v),
+                  decoration: _dec(
+                    'Group Name',
+                    hint: 'Optional group for this config',
                   ),
                 ),
-              ),
+                const SizedBox(height: 16),
+                // \u624b\u52a8\u7f16\u5199\u533a\u57df
+                Text(
+                  'Config Content',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  flex: 9,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: TextField(
+                      controller: _tomlCtrl,
+                      onChanged: (v) => setState(() => _toml = v),
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText:
+                            '# \u5728\u6b64\u7f16\u5199 frpc \u914d\u7f6e...',
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.all(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const Spacer(flex: 1),
+              ],
             ),
-            const Spacer(flex: 1),
-          ],
-          ),
           ),
         ),
       ),

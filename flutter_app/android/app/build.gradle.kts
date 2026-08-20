@@ -4,6 +4,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseStoreFile = providers.environmentVariable("FRP_RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("FRP_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("FRP_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("FRP_RELEASE_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.frp.frp_app"
     compileSdk = flutter.compileSdkVersion
@@ -23,22 +34,28 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
-        create("release") {
-            // 固定 release 签名：仓库内置 keystore，保证每次 CI 构建签名一致，
-            // 覆盖安装（adb install -r）不要求卸载重装。
-            storeFile = file("release.keystore")
-            storePassword = "frp-release"
-            keyAlias = "frp"
-            keyPassword = "frp-release"
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
         }
     }
 
     buildTypes {
+        debug {
+            // Keep device tests isolated from an installed production package.
+            applicationIdSuffix = ".debug"
+        }
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // 本地无密钥时可生成 unsigned release 用于验证；正式 CI 必须注入四个 FRP_RELEASE_* 变量。
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -48,6 +65,12 @@ android {
             useLegacyPackaging = true
         }
     }
+}
+
+dependencies {
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")
 }
 
 kotlin {

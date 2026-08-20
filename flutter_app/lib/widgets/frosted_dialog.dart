@@ -54,9 +54,7 @@ class FrostedScrim extends StatelessWidget {
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
-          color: Colors.black.withValues(alpha: 0.35),
-        ),
+        child: Container(color: Colors.black.withValues(alpha: 0.35)),
       ),
     );
   }
@@ -79,9 +77,7 @@ class FrostedCard extends StatelessWidget {
     return Card(
       margin: EdgeInsets.zero,
       elevation: 8,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: maxWidth),
         child: Padding(padding: padding, child: child),

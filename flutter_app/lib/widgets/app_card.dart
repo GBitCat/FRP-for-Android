@@ -57,9 +57,7 @@ class AppCard extends StatelessWidget {
     return Card(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
-      child: onTap != null
-          ? InkWell(onTap: onTap, child: content)
-          : content,
+      child: onTap != null ? InkWell(onTap: onTap, child: content) : content,
     );
   }
 }

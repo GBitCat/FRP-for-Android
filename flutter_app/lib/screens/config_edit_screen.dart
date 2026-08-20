@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/frp_config.dart';
+import '../services/config_domain_service.dart';
+import '../services/config_validator.dart';
 import '../services/toml_generator.dart' as toml;
+import '../widgets/config_form_fields.dart';
 import '../widgets/frosted_dialog.dart';
 import '../state/app_state.dart';
 
@@ -66,11 +69,14 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
     _controllers['serverName'] = TextEditingController(text: _serverName);
     _controllers['bindAddr'] = TextEditingController(text: _bindAddr);
     _controllers['bindPort'] = TextEditingController(text: _bindPort);
-    _controllers['fallbackTimeoutMs'] =
-        TextEditingController(text: _fallbackTimeoutMs);
+    _controllers['fallbackTimeoutMs'] = TextEditingController(
+      text: _fallbackTimeoutMs,
+    );
     _controllers['stcpName'] = TextEditingController(text: _stcpName);
     _controllers['stcpSecretKey'] = TextEditingController(text: _stcpSecretKey);
-    _controllers['stcpServerName'] = TextEditingController(text: _stcpServerName);
+    _controllers['stcpServerName'] = TextEditingController(
+      text: _stcpServerName,
+    );
     _controllers['stcpBindAddr'] = TextEditingController(text: _stcpBindAddr);
     _controllers['stcpBindPort'] = TextEditingController(text: _stcpBindPort);
     _controllers['editGroupName'] = TextEditingController(text: _editGroupName);
@@ -142,13 +148,11 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
 
   /// XTCP 固定规则后的有效名称（linux-ssh → linux-ssh-xtcp）
   String get _effectiveName {
-    if (_protocol == 'xtcp' && _useNamingRule) {
-      final base = _name.trim();
-      if (base.endsWith('-xtcp')) return base;
-      if (base.isEmpty) return '';
-      return '$base-xtcp';
-    }
-    return _name;
+    return ConfigDomainService.effectiveName(
+      _name,
+      protocol: _protocol,
+      useNamingRule: _useNamingRule,
+    );
   }
 
   void _syncServerName() {
@@ -172,13 +176,19 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
       bindAddr: _bindAddr,
       useEncryption: _useEncryption,
       useCompression: _useCompression,
-      serverId: _serverId.isEmpty ? appState.effectiveServer.serverId : _serverId,
-      groupName: _original?.isInGroup() == true ? _editGroupName : (_original?.groupName ?? ''),
+      serverId: _serverId.isEmpty
+          ? appState.effectiveServer.serverId
+          : _serverId,
+      groupName: _original?.isInGroup() == true
+          ? _editGroupName
+          : (_original?.groupName ?? ''),
       useFallback: _useFallback,
       fallbackTo: _useFallback
           ? (_useCustomStcp
-              ? (_stcpName.isEmpty ? _autoStcpName : _stcpName)
-              : (_original?.fallbackTo.isNotEmpty == true ? _original!.fallbackTo : _autoStcpName))
+                ? (_stcpName.isEmpty ? _autoStcpName : _stcpName)
+                : (_original?.fallbackTo.isNotEmpty == true
+                      ? _original!.fallbackTo
+                      : _autoStcpName))
           : '',
       fallbackTimeoutMs: int.tryParse(_fallbackTimeoutMs) ?? 3000,
       useCustomStcp: _useCustomStcp,
@@ -195,38 +205,17 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
   Future<void> _save() async {
     final state = appState;
     final config = _buildConfig();
-    // 校验
-    if (config.name.trim().isEmpty) {
-      _toast('Name is required');
+    final validationError = ConfigValidator.validate(config);
+    if (validationError != null) {
+      _toast(validationError);
       return;
-    }
-    if (_isSecretProtocol) {
-      if (config.isVisitor() && (config.serverName == null || config.serverName!.isEmpty)) {
-        _toast('Server name is required for visitor');
-        return;
-      }
-      if (config.isVisitor() && (config.bindPort <= 0 && config.bindPort != -1)) {
-        _toast('Bind port is required for visitor');
-        return;
-      }
-      if (!config.isVisitor() && config.localPort <= 0) {
-        _toast('Local port is required');
-        return;
-      }
-    } else {
-      if (config.localPort <= 0) {
-        _toast('Local port is required');
-        return;
-      }
-      if (config.remotePort <= 0) {
-        _toast('Remote port is required');
-        return;
-      }
     }
 
     if (_isEditing) {
       await state.updateConfig(config);
-      if (config.isVisitor() && config.supportsFallback() && config.useFallback) {
+      if (config.isVisitor() &&
+          config.supportsFallback() &&
+          config.useFallback) {
         await state.syncLinkedStcp(config);
       }
       // 分组重命名：同步到组内全部配置
@@ -262,7 +251,9 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(height: 8),
-              const Text('Enter a name for the XTCP + STCP configuration group:'),
+              const Text(
+                'Enter a name for the XTCP + STCP configuration group:',
+              ),
               const SizedBox(height: 8),
               TextField(
                 controller: controller,
@@ -315,17 +306,21 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
             groupName: finalName,
             isGroupPrimary: false,
           )
-        : state.createLinkedStcpConfig(xtcp).copyWith(
-            groupId: groupId,
-            groupName: finalName,
-            isGroupPrimary: false,
-          );
+        : state
+              .createLinkedStcpConfig(xtcp)
+              .copyWith(
+                groupId: groupId,
+                groupName: finalName,
+                isGroupPrimary: false,
+              );
     await state.addConfig(stcp);
-    await state.addConfig(xtcp.copyWith(
-      groupId: groupId,
-      groupName: finalName,
-      isGroupPrimary: true,
-    ));
+    await state.addConfig(
+      xtcp.copyWith(
+        groupId: groupId,
+        groupName: finalName,
+        isGroupPrimary: true,
+      ),
+    );
     _toast('Created group: $finalName');
     if (mounted) Navigator.pop(context);
   }
@@ -339,27 +334,27 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
   String _generatePreview() {
     final server = appState.effectiveServer;
     final config = _buildConfig();
-    final stcp = _isSecretProtocol &&
-            _supportsFallback &&
-            _isVisitor &&
-            _useFallback
+    final stcp =
+        _isSecretProtocol && _supportsFallback && _isVisitor && _useFallback
         ? (_useCustomStcp
-            ? FrpConfig(
-                name: _stcpName.isEmpty ? _autoStcpName : _stcpName,
-                protocol: 'stcp',
-                role: 'visitor',
-                secretKey: _stcpSecretKey.isEmpty ? _secretKey : _stcpSecretKey,
-                serverName: _stcpServerName.isEmpty
-                    ? _serverName
-                    : _stcpServerName,
-                bindPort: int.tryParse(_stcpBindPort) ?? -1,
-                localPort: 0,
-                bindAddr: _stcpBindAddr,
-                useEncryption: _useEncryption,
-                useCompression: _useCompression,
-                serverId: _serverId,
-              )
-            : appState.createLinkedStcpConfig(config))
+              ? FrpConfig(
+                  name: _stcpName.isEmpty ? _autoStcpName : _stcpName,
+                  protocol: 'stcp',
+                  role: 'visitor',
+                  secretKey: _stcpSecretKey.isEmpty
+                      ? _secretKey
+                      : _stcpSecretKey,
+                  serverName: _stcpServerName.isEmpty
+                      ? _serverName
+                      : _stcpServerName,
+                  bindPort: int.tryParse(_stcpBindPort) ?? -1,
+                  localPort: 0,
+                  bindAddr: _stcpBindAddr,
+                  useEncryption: _useEncryption,
+                  useCompression: _useCompression,
+                  serverId: _serverId,
+                )
+              : appState.createLinkedStcpConfig(config))
         : null;
     return toml.generateToml(server, config, stcp);
   }
@@ -384,9 +379,7 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_isEditing ? 'Edit Configuration' : 'New Configuration'),
-        actions: [
-          TextButton(onPressed: _save, child: const Text('Save')),
-        ],
+        actions: [TextButton(onPressed: _save, child: const Text('Save'))],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -394,7 +387,7 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 隶属 Server
-            Text('Basic Information', style: Theme.of(context).textTheme.titleMedium),
+            const ConfigSectionTitle('Basic Information'),
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               initialValue: _serverId,
@@ -403,12 +396,14 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                 border: OutlineInputBorder(),
               ),
               items: appState.servers
-                  .map((sv) => DropdownMenuItem(
-                        value: sv.serverId,
-                        child: Text(
-                          '${sv.name.isEmpty ? "FRPS Server" : sv.name} (${sv.serverId})',
-                        ),
-                      ))
+                  .map(
+                    (sv) => DropdownMenuItem(
+                      value: sv.serverId,
+                      child: Text(
+                        '${sv.name.isEmpty ? "FRPS Server" : sv.name} (${sv.serverId})',
+                      ),
+                    ),
+                  )
                   .toList(),
               onChanged: (v) => setState(() => _serverId = v ?? ''),
             ),
@@ -429,7 +424,7 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
             const SizedBox(height: 16),
 
             // 协议选择
-            Text('Protocol', style: Theme.of(context).textTheme.titleMedium),
+            const ConfigSectionTitle('Protocol'),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -463,28 +458,28 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              Text('Local Settings', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Local Settings',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: 8),
-              TextField(
+              ConfigTextField(
                 controller: _ctrl('localIp'),
                 onChanged: (v) => setState(() => _localIp = v),
-                decoration: const InputDecoration(
-                  labelText: 'Local IP',
-                  border: OutlineInputBorder(),
-                ),
+                label: 'Local IP',
               ),
               const SizedBox(height: 12),
-              TextField(
+              ConfigTextField(
                 controller: _ctrl('localPort'),
                 onChanged: (v) => setState(() => _localPort = v),
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Local Port *',
-                  border: OutlineInputBorder(),
-                ),
+                label: 'Local Port *',
               ),
               const SizedBox(height: 16),
-              Text('Remote Settings', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Remote Settings',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: 8),
               TextField(
                 controller: _ctrl('remotePort'),
@@ -509,8 +504,10 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Configuration Preview',
-                        style: Theme.of(context).textTheme.titleSmall),
+                    Text(
+                      'Configuration Preview',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
                     const SizedBox(height: 8),
                     SelectableText(
                       _generatePreview(),
@@ -560,8 +557,10 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                 if (_protocol == 'xtcp')
                   Row(
                     children: [
-                      Text('Fixed Rule',
-                          style: Theme.of(context).textTheme.bodySmall),
+                      Text(
+                        'Fixed Rule',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                       Switch(
                         value: _useNamingRule,
                         onChanged: (v) => setState(() => _useNamingRule = v),
@@ -575,9 +574,9 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                 _useNamingRule
                     ? 'Auto suffix: -xtcp appended to the name'
                     : 'Name is used as-is',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
             const SizedBox(height: 8),
 
@@ -589,7 +588,9 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                 labelText: '${_protocol.toUpperCase()} Name',
                 hintText: 'e.g., linux-ssh',
                 border: const OutlineInputBorder(),
-                suffixText: (_protocol == 'xtcp' && _useNamingRule) ? '-xtcp' : null,
+                suffixText: (_protocol == 'xtcp' && _useNamingRule)
+                    ? '-xtcp'
+                    : null,
                 suffixStyle: TextStyle(color: scheme.primary),
               ),
             ),
@@ -629,8 +630,11 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                 hintText: 'Shared secret for authentication',
                 border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
-                  icon: Icon(_showSecretKey ? Icons.visibility : Icons.visibility_off),
-                  onPressed: () => setState(() => _showSecretKey = !_showSecretKey),
+                  icon: Icon(
+                    _showSecretKey ? Icons.visibility : Icons.visibility_off,
+                  ),
+                  onPressed: () =>
+                      setState(() => _showSecretKey = !_showSecretKey),
                 ),
               ),
             ),
@@ -639,14 +643,16 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
             const SizedBox(height: 8),
 
             // 传输加密/压缩
-            Text('Transport Encryption / Compression',
-                style: Theme.of(context).textTheme.titleSmall),
+            Text(
+              'Transport Encryption / Compression',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             const SizedBox(height: 2),
             Text(
               'Must match the peer frpc transport settings (XTCP P2P requires both ends identical)',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -683,9 +689,9 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
               const SizedBox(height: 2),
               Text(
                 'Must match the proxy name on server (e.g. xtcp_ssh, stcp_ssh)',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 12),
               Row(
@@ -790,10 +796,12 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
               ),
             ),
             Text(
-              _useCustomStcp ? 'Custom configuration' : 'Auto (uses XTCP settings)',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+              _useCustomStcp
+                  ? 'Custom configuration'
+                  : 'Auto (uses XTCP settings)',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 8),
             if (_useCustomStcp) ...[
@@ -860,9 +868,9 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
               const SizedBox(height: 4),
               Text(
                 'Auto-generated STCP config:',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 4),
               Text(

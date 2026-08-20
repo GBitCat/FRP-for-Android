@@ -24,6 +24,7 @@ import java.net.NetworkInterface
 class MainActivity : FlutterActivity() {
 
     private var channel: MethodChannel? = null
+    private var secureChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -35,11 +36,10 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "start" -> {
                         val configPath = call.argument<String>("configPath")
-                        FrpcService.start(this)
-                        result.success(FrpcService.instance?.startFrpc(configPath) ?: false)
+                        result.success(FrpcService.start(this, configPath))
                     }
                     "stop" -> {
-                        FrpcService.instance?.stopFrpc()
+                        FrpcService.stop(this)
                         result.success(true)
                     }
                     "getInitialTab" -> result.success(intent?.getIntExtra("initial_tab", -1) ?: -1)
@@ -69,6 +69,27 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+        secureChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.frp.app/secure_store"
+        ).also { ch ->
+            ch.setMethodCallHandler { call, result ->
+                val value = call.argument<String>("value")
+                if (value == null) {
+                    result.error("INVALID_ARGUMENT", "value is required", null)
+                    return@setMethodCallHandler
+                }
+                try {
+                    when (call.method) {
+                        "encrypt" -> result.success(SecureStringCodec.encrypt(value))
+                        "decrypt" -> result.success(SecureStringCodec.decrypt(value))
+                        else -> result.notImplemented()
+                    }
+                } catch (e: Exception) {
+                    result.error("SECURE_STORAGE_ERROR", e.message, null)
+                }
+            }
+        }
         // 挂载状态推送通道（服务持有，Activity 存活期间推送），并重放当前状态
         FrpcService.channel = channel
         FrpcService.instance?.syncToChannel()
@@ -92,6 +113,7 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         // 不停 frpc：进程由 FrpcService 托管，Activity 销毁不影响后台连接
         FrpcService.channel = null
+        secureChannel?.setMethodCallHandler(null)
         super.onDestroy()
     }
 
