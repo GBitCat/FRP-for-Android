@@ -1,31 +1,45 @@
 # Add 'android' label to any changes within the 'app' folder
 android:
-  - any: ['app/**/*']
+  - changed-files:
+      - any-glob-to-any-file: 'flutter_app/android/**'
 
 # Add 'kotlin' label to any changes to Kotlin files
 kotlin:
-  - any: ['**/*.kt']
+  - changed-files:
+      - any-glob-to-any-file: '**/*.kt'
 
 # Add 'gradle' label to any changes to Gradle files
 gradle:
-  - any: ['**/*.gradle', '**/*.gradle.kts']
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.gradle'
+          - '**/*.gradle.kts'
 
 # Add 'xml' label to any changes to XML files
 xml:
-  - any: ['**/*.xml']
+  - changed-files:
+      - any-glob-to-any-file: '**/*.xml'
 
 # Add 'documentation' label to any changes to markdown files
 documentation:
-  - any: ['**/*.md']
+  - changed-files:
+      - any-glob-to-any-file: '**/*.md'
 
 # Add 'github' label to any changes to GitHub configuration files
 github:
-  - any: ['.github/**/*']
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
 
 # Add 'scripts' label to any changes to script files
 scripts:
-  - any: ['scripts/**/*']
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'scripts/**'
+          - 'flutter_app/tool/**'
 
 # Add 'tests' label to any changes to test files
 tests:
-  - any: ['**/*Test*', '**/*test*']
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*Test*'
+          - '**/*test*'

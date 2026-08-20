@@ -9,7 +9,7 @@ jobs:
   settings:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - uses: matt-ball/settings-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
