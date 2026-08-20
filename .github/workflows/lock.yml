@@ -10,7 +10,7 @@ jobs:
   lock:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/lock-threads@v3
+      - uses: dessant/lock-threads@v6
         with:
           issue-inactive-days: '365'
           pr-inactive-days: '365'
