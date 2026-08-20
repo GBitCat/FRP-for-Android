@@ -9,6 +9,7 @@ import '../models/connection_status.dart';
 import '../models/frp_config.dart';
 import '../models/server_config.dart';
 import '../services/config_import_export.dart';
+import '../services/config_domain_service.dart';
 import '../services/config_store.dart';
 import '../services/frp_engine.dart';
 import '../services/toml_generator.dart' as toml;
@@ -34,7 +35,6 @@ class AppState extends ChangeNotifier {
   List<ServerConfig> servers = [];
   String _selectedServerId = '';
   String _stunServer = 'stun.easyvoip.com:3478';
-  bool trafficEnabled = false;
   bool hideFromRecents = false;
 
   /// 首次启动待弹出的省电策略提醒
@@ -51,26 +51,31 @@ class AppState extends ChangeNotifier {
   double totalMemoryMb = 0;
   String ipv4 = '';
   String ipv6 = '';
-  double uploadSpeed = 0;
-  double downloadSpeed = 0;
-  double totalBytes = 0;
+  Timer? _pollTimer;
+  bool _pollInProgress = false;
+  bool _disposed = false;
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
 
   AppState() {
-    engine.statusStream.listen((s) {
-      serverStatus = s;
-      // connecting/connected → 运行中；unknown(断开) → 停止
-      if (s.type == ConnectionType.connecting ||
-          s.type == ConnectionType.connected) {
-        running = true;
-      } else if (s.type == ConnectionType.unknown) {
-        running = false;
-      }
-      notifyListeners();
-    });
-    engine.appStatusesStream.listen((m) {
-      appStatuses = m;
-      notifyListeners();
-    });
+    _subscriptions.add(
+      engine.statusStream.listen((s) {
+        serverStatus = s;
+        // connecting/connected → 运行中；unknown(断开) → 停止
+        if (s.type == ConnectionType.connecting ||
+            s.type == ConnectionType.connected) {
+          running = true;
+        } else if (s.type == ConnectionType.unknown) {
+          running = false;
+        }
+        notifyListeners();
+      }),
+    );
+    _subscriptions.add(
+      engine.appStatusesStream.listen((m) {
+        appStatuses = m;
+        notifyListeners();
+      }),
+    );
     _load();
     _startPolling();
   }
@@ -95,29 +100,47 @@ class AppState extends ChangeNotifier {
     if (servers.isEmpty) {
       // 迁移旧单 server 数据
       final old = await _store.loadServer();
-      servers = [old ?? const ServerConfig(serverId: '')];
+      final migrated = old ?? const ServerConfig();
+      servers = [
+        migrated.serverId.length == 8
+            ? migrated
+            : migrated.copyWith(serverId: ServerConfig.generateId()),
+      ];
+      await _store.saveServers(servers);
+    } else if (servers.length == 1 && servers.first.serverId.length != 8) {
+      servers = [servers.first.copyWith(serverId: ServerConfig.generateId())];
       await _store.saveServers(servers);
     }
-    _selectedServerId = servers.first.serverId;
+    final savedSelectedId = await _store.loadSelectedServerId();
+    _selectedServerId = servers.any((e) => e.serverId == savedSelectedId)
+        ? savedSelectedId
+        : servers.first.serverId;
+    await _store.saveSelectedServerId(_selectedServerId);
     notifyListeners();
   }
 
   void _startPolling() {
-    Timer.periodic(const Duration(seconds: 2), (_) async {
+    _pollTimer?.cancel();
+    _pollTimer = Timer(Duration.zero, _poll);
+  }
+
+  Future<void> _poll() async {
+    if (_pollInProgress) return;
+    _pollInProgress = true;
+    try {
       if (totalMemoryMb <= 0) {
         totalMemoryMb = await engine.getTotalMemoryMb();
       }
       memoryMb = await engine.getMemoryMb();
       ipv4 = await engine.getIpv4();
       ipv6 = await engine.getIpv6();
-      if (running) {
-        // 流量统计暂为演示值；后续接入 /proc/net 真实统计
-        uploadSpeed = 0.8 * (uploadSpeed + 1.2) % 900;
-        downloadSpeed = 1.6 * (downloadSpeed + 3.1) % 2400;
-        totalBytes += uploadSpeed + downloadSpeed;
-      }
       notifyListeners();
-    });
+    } finally {
+      _pollInProgress = false;
+      if (!_disposed) {
+        _pollTimer = Timer(const Duration(seconds: 2), _poll);
+      }
+    }
   }
 
   Future<void> start() async {
@@ -128,9 +151,11 @@ class AppState extends ChangeNotifier {
     );
     notifyListeners();
     try {
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/frpc_all.toml')
-        ..writeAsStringSync(buildFullToml());
+      final dir = await getApplicationSupportDirectory();
+      final file = File('${dir.path}/frpc_${selectedServer.serverId}.toml');
+      final pending = File('${file.path}.pending');
+      await pending.writeAsString(buildFullToml(), flush: true);
+      await pending.rename(file.path);
       final ok = await engine.start(file.path);
       if (!ok) {
         running = false;
@@ -172,6 +197,8 @@ class AppState extends ChangeNotifier {
 
   bool isServerSelected(String id) => id == _selectedServerId;
 
+  String get selectedServerId => _selectedServerId;
+
   /// 保存主题设置（模式 + 主色）
   Future<void> setTheme(ThemeSettings t) async {
     theme = t;
@@ -189,18 +216,27 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> selectServer(String id) async {
-    if (servers.any((e) => e.serverId == id)) {
-      _selectedServerId = id;
-      notifyListeners();
+    if (id == _selectedServerId || !servers.any((e) => e.serverId == id)) {
+      return;
     }
+    final restart = running;
+    if (restart) await stop();
+    _selectedServerId = id;
+    await _store.saveSelectedServerId(id);
+    notifyListeners();
+    if (restart) await start();
   }
 
   Future<void> deleteServer(String id) async {
+    if (id == _selectedServerId && running) await stop();
     servers.removeWhere((e) => e.serverId == id);
+    configs.removeWhere((e) => e.serverId == id);
     if (_selectedServerId == id) {
       _selectedServerId = servers.isNotEmpty ? servers.first.serverId : '';
     }
     await _store.saveServers(servers);
+    await _store.saveConfigs(configs);
+    await _store.saveSelectedServerId(_selectedServerId);
     notifyListeners();
   }
 
@@ -216,7 +252,10 @@ class AppState extends ChangeNotifier {
 
   /// 完整 frpc TOML（导出用）：全局段 + 已启用的应用配置
   String buildFullToml() {
-    final s = effectiveServer;
+    return buildFullTomlFor(effectiveServer);
+  }
+
+  String buildFullTomlFor(ServerConfig s) {
     final apps = configs
         .where(
           (c) => c.enabled && (c.serverId.isEmpty || c.serverId == s.serverId),
@@ -230,11 +269,22 @@ class AppState extends ChangeNotifier {
         );
   }
 
+  Map<String, String> buildAllServerTomls() => {
+    for (final server in servers) server.serverId: buildFullTomlFor(server),
+  };
+
   /// 应用导入结果：覆盖 server（如有）与 configs，返回导入数量
   Future<int> applyImport(ExportData? data) async {
     if (data == null) return 0;
-    if (data.server != null) {
-      await saveServerConfig(data.server!);
+    if (running) await stop();
+    if (data.servers.isNotEmpty) {
+      servers = List.of(data.servers);
+      _selectedServerId =
+          servers.any((e) => e.serverId == data.selectedServerId)
+          ? data.selectedServerId
+          : servers.first.serverId;
+      await _store.saveServers(servers);
+      await _store.saveSelectedServerId(_selectedServerId);
     }
     configs = data.configs;
     await _store.saveConfigs(configs);
@@ -254,22 +304,41 @@ class AppState extends ChangeNotifier {
   }
 
   // ---- 配置 CRUD ----
-  Future<void> saveServerConfig(ServerConfig s) async {
-    final i = servers.indexWhere((e) => e.serverId == s.serverId);
+  Future<void> saveServerConfig(
+    ServerConfig s, {
+    String? originalServerId,
+  }) async {
+    final oldId = originalServerId ?? s.serverId;
+    final i = servers.indexWhere((e) => e.serverId == oldId);
+    final restart = running && oldId == _selectedServerId;
+    if (restart) await stop();
     if (i >= 0) {
       servers[i] = s;
     } else {
       servers.add(s);
     }
-    _selectedServerId = s.serverId;
+    if (oldId != s.serverId) {
+      configs = configs
+          .map(
+            (e) => e.serverId == oldId ? e.copyWith(serverId: s.serverId) : e,
+          )
+          .toList();
+      await _store.saveConfigs(configs);
+    }
+    if (_selectedServerId == oldId || originalServerId == null) {
+      _selectedServerId = s.serverId;
+    }
     await _store.saveServers(servers);
+    await _store.saveSelectedServerId(_selectedServerId);
     notifyListeners();
+    if (restart) await start();
   }
 
   Future<void> addServerConfig(ServerConfig s) async {
     servers.add(s);
     _selectedServerId = s.serverId;
     await _store.saveServers(servers);
+    await _store.saveSelectedServerId(_selectedServerId);
     notifyListeners();
   }
 
@@ -349,133 +418,30 @@ class AppState extends ChangeNotifier {
   }
 
   FrpConfig createLinkedStcpConfig(FrpConfig xtcp) {
-    final stcpName =
-        '${xtcp.name.endsWith('-xtcp') ? xtcp.name.substring(0, xtcp.name.length - 5) : xtcp.name}-stcp';
-    return FrpConfig(
-      name: stcpName,
-      localIp: xtcp.localIp,
-      localPort: xtcp.localPort,
-      protocol: 'stcp',
-      role: 'visitor',
-      secretKey: xtcp.secretKey,
-      serverName: xtcp.stcpServerName.isNotEmpty
-          ? xtcp.stcpServerName
-          : (xtcp.serverName ?? '').replaceAll('xtcp', 'stcp'),
-      bindPort: -1,
-      bindAddr: '',
-      useEncryption: xtcp.useEncryption,
-      useCompression: xtcp.useCompression,
-      serverId: xtcp.serverId,
-    );
+    return ConfigDomainService.createLinkedStcpConfig(xtcp);
   }
 
   /// 分组聚合：用于仪表盘 Applications 列表
   /// 状态优先级：Error > P2P(XTCP) > RELAY(STCP) > 未连接
   List<AppRow> buildAppRows() {
-    final rows = <AppRow>[];
-    ConnectionType aggregate(Iterable<ConnectionType> types) {
-      if (types.contains(ConnectionType.error)) return ConnectionType.error;
-      if (types.contains(ConnectionType.p2p)) return ConnectionType.p2p;
-      if (types.contains(ConnectionType.relay)) return ConnectionType.relay;
-      if (types.isNotEmpty) return ConnectionType.unknown;
-      return ConnectionType.unknown;
-    }
-
-    // 分组
-    final grouped = configs.where((e) => e.isInGroup()).toList();
-    final groupIds = grouped.map((e) => e.groupId).toSet();
-    for (final gid in groupIds) {
-      final members = grouped.where((e) => e.groupId == gid).toList();
-      final primary = members.firstWhere(
-        (e) => e.isGroupPrimary,
-        orElse: () => members.first,
-      );
-      final name = primary.groupName.isNotEmpty
-          ? primary.groupName
-          : primary.name;
-      final types = members
-          .map((e) => appStatuses[e.name])
-          .whereType<ConnectionType>()
-          .toList();
-      final status = aggregate(types);
-      rows.add(AppRow(name, ConnectionStatus(status).label, status));
-    }
-    for (final c in configs.where((e) => !e.isInGroup())) {
-      // 手动配置：显示名可能是分组名，实际 visitor 名在 TOML 里（可能有多个块），聚合全部
-      final names = <String>{c.name, ...c.manualNames};
-      final types = names
-          .map((n) => appStatuses[n])
-          .whereType<ConnectionType>()
-          .toList();
-      final status = aggregate(types);
-      rows.add(AppRow(c.name, ConnectionStatus(status).label, status));
-    }
-    return rows;
+    return ConfigDomainService.buildAppRows(configs, appStatuses);
   }
-}
 
-class AppRow {
-  final String name;
-  final String label;
-  final ConnectionType status;
-  AppRow(this.name, this.label, this.status);
-}
-
-/// 配置分组：groupId > 0 为真实分组（主 XTCP + 子 STCP），groupId == 0 为单条配置
-class ConfigGroup {
-  final int groupId;
-  final String groupName;
-  final FrpConfig primary;
-  final List<FrpConfig> members;
-  final bool enabled;
-
-  const ConfigGroup({
-    required this.groupId,
-    required this.groupName,
-    required this.primary,
-    required this.members,
-    required this.enabled,
-  });
-
-  bool get isGroup => groupId > 0;
+  @override
+  void dispose() {
+    _disposed = true;
+    _pollTimer?.cancel();
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    super.dispose();
+  }
 }
 
 extension AppStateGroups on AppState {
   /// 构建分组列表：分组在前（主配置在前），无分组配置单条在后
   List<ConfigGroup> buildGroups() {
-    final result = <ConfigGroup>[];
-    final grouped = configs.where((e) => e.isInGroup()).toList();
-    final groupIds = grouped.map((e) => e.groupId).toSet().toList()..sort();
-    for (final gid in groupIds) {
-      final members = grouped.where((e) => e.groupId == gid).toList();
-      final primary = members.firstWhere(
-        (e) => e.isGroupPrimary,
-        orElse: () => members.first,
-      );
-      result.add(
-        ConfigGroup(
-          groupId: gid,
-          groupName: primary.groupName.isNotEmpty
-              ? primary.groupName
-              : primary.name,
-          primary: primary,
-          members: members,
-          enabled: members.every((e) => e.enabled),
-        ),
-      );
-    }
-    for (final c in configs.where((e) => !e.isInGroup())) {
-      result.add(
-        ConfigGroup(
-          groupId: 0,
-          groupName: c.name,
-          primary: c,
-          members: const [],
-          enabled: c.enabled,
-        ),
-      );
-    }
-    return result;
+    return ConfigDomainService.buildGroups(configs);
   }
 }
 

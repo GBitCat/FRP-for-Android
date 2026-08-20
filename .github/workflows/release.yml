@@ -7,6 +7,10 @@ on:
         description: 'Release version, e.g. 0.1.2 (tag will be v0.1.2)'
         required: true
         default: '0.1.2'
+      version_code:
+        description: 'Monotonically increasing Android version code'
+        required: true
+        default: '12'
 
 permissions:
   contents: write
@@ -18,32 +22,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.44.9
           cache: true
 
       - name: Install Android SDK components
         run: |
-          sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "build-tools;36.0.0" || true
+          sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "build-tools;36.0.0"
           yes | sdkmanager --licenses || true
 
       - name: Grant execute permission
         run: chmod +x flutter_app/android/gradlew
 
-      - name: Build release APK
+      - name: Restore release signing key
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.FRP_RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.FRP_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.FRP_RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.FRP_RELEASE_KEY_PASSWORD }}
+        run: |
+          test -n "$RELEASE_KEYSTORE_BASE64"
+          test -n "$RELEASE_STORE_PASSWORD"
+          test -n "$RELEASE_KEY_ALIAS"
+          test -n "$RELEASE_KEY_PASSWORD"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/frp-release.keystore"
+
+      - name: Analyze, test and build release APK
         working-directory: flutter_app
+        env:
+          FRP_RELEASE_STORE_FILE: ${{ runner.temp }}/frp-release.keystore
+          FRP_RELEASE_STORE_PASSWORD: ${{ secrets.FRP_RELEASE_STORE_PASSWORD }}
+          FRP_RELEASE_KEY_ALIAS: ${{ secrets.FRP_RELEASE_KEY_ALIAS }}
+          FRP_RELEASE_KEY_PASSWORD: ${{ secrets.FRP_RELEASE_KEY_PASSWORD }}
         run: |
           flutter pub get
-          flutter build apk --release
+          dart format --output=none --set-exit-if-changed lib test
+          flutter analyze
+          flutter test
+          flutter build apk --release --build-name "${{ inputs.version }}" --build-number "${{ inputs.version_code }}"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose build/app/outputs/flutter-apk/app-release.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

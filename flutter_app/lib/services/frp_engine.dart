@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/services.dart';
 
@@ -30,7 +31,7 @@ class FrpEngine {
   Map<String, ConnectionType> _appStatuses = {};
   Map<String, ConnectionType> get appStatuses => _appStatuses;
 
-  final List<String> _logs = [];
+  final ListQueue<String> _logs = ListQueue<String>();
   List<String> get logs => List.unmodifiable(_logs);
 
   Future<dynamic> _onNativeCall(MethodCall call) async {
@@ -57,7 +58,7 @@ class FrpEngine {
       case 'onLog':
         final line = call.arguments as String? ?? '';
         _logs.add(line);
-        if (_logs.length > 2000) _logs.removeAt(0);
+        if (_logs.length > 2000) _logs.removeFirst();
         _logController.add(line);
         break;
     }

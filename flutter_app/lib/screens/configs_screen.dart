@@ -5,6 +5,7 @@ import '../models/server_config.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/glass_sliver_appbar.dart';
 import '../state/app_state.dart';
+import '../services/config_domain_service.dart';
 import '../widgets/app_card.dart';
 import 'config_edit_screen.dart';
 import 'manual_config_edit_screen.dart';
@@ -25,9 +26,7 @@ class ConfigsScreen extends StatelessWidget {
       return;
     }
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ConfigEditScreen(configId: configId),
-      ),
+      MaterialPageRoute(builder: (_) => ConfigEditScreen(configId: configId)),
     );
   }
 
@@ -52,24 +51,28 @@ class ConfigsScreen extends StatelessWidget {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 8),
-                    ...state.servers.map((s) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: _ServerListItem(
-                            server: s,
-                            selected: state.isServerSelected(s.serverId),
-                            onSelect: () => state.selectServer(s.serverId),
-                            onPreview: () => _showServerPreview(context),
-                            onEdit: () => _showServerEdit(context, initial: s),
-                            onDelete: () => _confirmDeleteServer(context, s),
-                          ),
-                        )),
+                    ...state.servers.map(
+                      (s) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _ServerListItem(
+                          server: s,
+                          selected: state.isServerSelected(s.serverId),
+                          onSelect: () => state.selectServer(s.serverId),
+                          onPreview: () => _showServerPreview(context),
+                          onEdit: () => _showServerEdit(context, initial: s),
+                          onDelete: () => _confirmDeleteServer(context, s),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
             if (state.configs.isEmpty)
               const SliverFillRemaining(
-                  hasScrollBody: false, child: _EmptyConfigs())
+                hasScrollBody: false,
+                child: _EmptyConfigs(),
+              )
             else ...[
               SliverToBoxAdapter(
                 child: Padding(
@@ -93,10 +96,15 @@ class ConfigsScreen extends StatelessWidget {
                             onEdit: () =>
                                 _openEdit(context, configId: group.primary.id),
                             onDelete: () => _confirmDeleteGroup(context, group),
-                            onOptions: () => _showItemMenu(context,
-                                onEdit: () =>
-                                    _openEdit(context, configId: group.primary.id),
-                                onDelete: () => _confirmDeleteGroup(context, group)),
+                            onOptions: () => _showItemMenu(
+                              context,
+                              onEdit: () => _openEdit(
+                                context,
+                                configId: group.primary.id,
+                              ),
+                              onDelete: () =>
+                                  _confirmDeleteGroup(context, group),
+                            ),
                           ),
                         );
                       }
@@ -106,12 +114,15 @@ class ConfigsScreen extends StatelessWidget {
                           config: group.primary,
                           onEdit: () =>
                               _openEdit(context, configId: group.primary.id),
-                          onDelete: () => _confirmDelete(context, group.primary),
-                          onOptions: () => _showItemMenu(context,
-                              onEdit: () =>
-                                  _openEdit(context, configId: group.primary.id),
-                              onDelete: () =>
-                                  _confirmDelete(context, group.primary)),
+                          onDelete: () =>
+                              _confirmDelete(context, group.primary),
+                          onOptions: () => _showItemMenu(
+                            context,
+                            onEdit: () =>
+                                _openEdit(context, configId: group.primary.id),
+                            onDelete: () =>
+                                _confirmDelete(context, group.primary),
+                          ),
                         ),
                       );
                     }).toList(),
@@ -133,8 +144,11 @@ class ConfigsScreen extends StatelessWidget {
   }
 
   /// 三点菜单：统一毛玻璃弹窗（Edit / Delete）
-  void _showItemMenu(BuildContext context,
-      {required VoidCallback onEdit, required VoidCallback onDelete}) {
+  void _showItemMenu(
+    BuildContext context, {
+    required VoidCallback onEdit,
+    required VoidCallback onDelete,
+  }) {
     showFrostedDialog<void>(
       context: context,
       builder: (dialogContext) => FrostedCard(
@@ -142,10 +156,7 @@ class ConfigsScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Actions',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
+            Text('Actions', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 4),
             const Divider(),
             _MenuAction(
@@ -184,7 +195,9 @@ class ConfigsScreen extends StatelessWidget {
               style: Theme.of(context).textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
-            Text("Are you sure you want to delete '${s.name}'?"),
+            Text(
+              "Are you sure you want to delete '${s.name}' and all configs assigned to it?",
+            ),
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -248,80 +261,78 @@ class ConfigsScreen extends StatelessWidget {
   }
 }
 
-  void _confirmDelete(BuildContext context, FrpConfig config) {
-    showFrostedDialog<void>(
-      context: context,
-      builder: (dialogContext) => FrostedCard(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Delete Configuration',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-            Text("Are you sure you want to delete '${config.name}'?"),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                    appState.deleteConfig(config.id);
-                  },
-                  child: const Text('Delete'),
-                ),
-              ],
-            ),
-          ],
-        ),
+void _confirmDelete(BuildContext context, FrpConfig config) {
+  showFrostedDialog<void>(
+    context: context,
+    builder: (dialogContext) => FrostedCard(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Delete Configuration',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          Text("Are you sure you want to delete '${config.name}'?"),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  appState.deleteConfig(config.id);
+                },
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
-  void _confirmDeleteGroup(BuildContext context, ConfigGroup group) {
-    showFrostedDialog<void>(
-      context: context,
-      builder: (dialogContext) => FrostedCard(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Delete Group',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-                "Are you sure you want to delete '${group.groupName}' and all its configs?"),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                    appState.deleteGroup(group.groupId);
-                  },
-                  child: const Text('Delete'),
-                ),
-              ],
-            ),
-          ],
-        ),
+void _confirmDeleteGroup(BuildContext context, ConfigGroup group) {
+  showFrostedDialog<void>(
+    context: context,
+    builder: (dialogContext) => FrostedCard(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Delete Group', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          Text(
+            "Are you sure you want to delete '${group.groupName}' and all its configs?",
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  appState.deleteGroup(group.groupId);
+                },
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
 class _EmptyConfigs extends StatelessWidget {
   const _EmptyConfigs();
@@ -334,18 +345,16 @@ class _EmptyConfigs extends StatelessWidget {
         children: [
           Text(
             'No configurations yet',
-            style: Theme.of(context)
-                .textTheme
-                .bodyLarge
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 8),
           Text(
             'Tap + to add or import from menu',
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -378,9 +387,11 @@ class _ServerListItem extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         children: [
-          Icon(Icons.dns_outlined,
-              size: 18,
-              color: selected ? scheme.primary : scheme.onSurfaceVariant),
+          Icon(
+            Icons.dns_outlined,
+            size: 18,
+            color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -388,8 +399,8 @@ class _ServerListItem extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                  ),
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+              ),
             ),
           ),
           if (selected) ...[
@@ -403,8 +414,8 @@ class _ServerListItem extends StatelessWidget {
               child: Text(
                 'Current',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: scheme.onPrimaryContainer,
-                    ),
+                  color: scheme.onPrimaryContainer,
+                ),
               ),
             ),
           ],
@@ -448,7 +459,9 @@ class _ConfigGroupItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final protocols = group.members.map((e) => e.protocol.toUpperCase()).toSet();
+    final protocols = group.members
+        .map((e) => e.protocol.toUpperCase())
+        .toSet();
     final protocolText = protocols.join(' + ');
     return AppCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -482,8 +495,8 @@ class _ConfigGroupItem extends StatelessWidget {
                 Text(
                   protocolText,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -554,8 +567,8 @@ class _ConfigItem extends StatelessWidget {
                 Text(
                   '${config.manualTypes.isEmpty ? config.protocol.toUpperCase() : config.manualTypes.join(' + ').toUpperCase()} · ${config.isVisitor() ? "Visitor" : "Server"}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -602,8 +615,8 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
   @override
   void initState() {
     super.initState();
-    final s = widget.initial ??
-        ServerConfig(serverId: ServerConfig.generateId());
+    final s =
+        widget.initial ?? ServerConfig(serverId: ServerConfig.generateId());
     _name = TextEditingController(text: s.name);
     _addr = TextEditingController(text: s.serverAddr);
     _port = TextEditingController(text: s.serverPort.toString());
@@ -626,20 +639,44 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
     super.dispose();
   }
 
-  void _save() {
-    final s = appState.effectiveServer;
-    appState.saveServerConfig(s.copyWith(
-      name: _name.text,
-      serverAddr: _addr.text,
-      serverPort: int.tryParse(_port.text) ?? 7000,
-      token: _token.text,
-      serverId: _serverId.text,
-      protocol: _protocol,
-      tcpMux: _tcpMux,
-      heartbeatInterval: _heartbeatInterval,
-      heartbeatTimeout: _heartbeatTimeout,
-      tcpMuxKeepaliveInterval: _keepalive,
-    ));
+  Future<void> _save() async {
+    final port = int.tryParse(_port.text);
+    if (_addr.text.trim().isEmpty || port == null || port < 1 || port > 65535) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid server address and port')),
+      );
+      return;
+    }
+    final id = _serverId.text.trim();
+    final originalId = widget.initial?.serverId;
+    if (id.length != 8 ||
+        appState.servers.any(
+          (e) => e.serverId == id && e.serverId != originalId,
+        )) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Server ID must be unique and 8 characters'),
+        ),
+      );
+      return;
+    }
+    final base = widget.initial ?? ServerConfig(serverId: id);
+    await appState.saveServerConfig(
+      base.copyWith(
+        name: _name.text,
+        serverAddr: _addr.text.trim(),
+        serverPort: port,
+        token: _token.text,
+        serverId: id,
+        protocol: _protocol,
+        tcpMux: _tcpMux,
+        heartbeatInterval: _heartbeatInterval,
+        heartbeatTimeout: _heartbeatTimeout,
+        tcpMuxKeepaliveInterval: _keepalive,
+      ),
+      originalServerId: originalId,
+    );
+    if (!mounted) return;
     Navigator.pop(context);
   }
 
@@ -701,85 +738,103 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                    // 顶部留白：避免第一个输入框的浮动标签被滚动区域裁剪
-                    const SizedBox(height: 6),
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                hintText: 'e.g., Home Server',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _serverId,
-                    readOnly: true,
+                  // 顶部留白：避免第一个输入框的浮动标签被滚动区域裁剪
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _name,
                     decoration: const InputDecoration(
-                      labelText: 'Server ID',
+                      labelText: 'Name',
+                      hintText: 'e.g., Home Server',
                       border: OutlineInputBorder(),
                     ),
                   ),
-                ),
-                TextButton(onPressed: _resetId, child: const Text('Reset ID')),
-              ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _addr,
-              decoration: const InputDecoration(
-                labelText: 'Server Address *',
-                hintText: 'e.g., frp.example.com',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _port,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Port',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _token,
-              decoration: const InputDecoration(
-                labelText: 'Token',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Transport', style: Theme.of(context).textTheme.titleSmall),
-            ),
-            const SizedBox(height: 4),
-            DropdownButtonFormField<String>(
-              initialValue: _protocol,
-              decoration: const InputDecoration(
-                labelText: 'Protocol',
-                border: OutlineInputBorder(),
-              ),
-              items: _protocols
-                  .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                  .toList(),
-              onChanged: (v) => setState(() => _protocol = v ?? 'tcp'),
-            ),
-            const SizedBox(height: 8),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('TCP Multiplexing (tcpMux)'),
-              value: _tcpMux,
-              onChanged: (v) => setState(() => _tcpMux = v),
-            ),
-            _intervalRow('Heartbeat Interval (s)', _heartbeatInterval, (v) => _heartbeatInterval = v),
-            _intervalRow('Heartbeat Timeout (s)', _heartbeatTimeout, (v) => _heartbeatTimeout = v),
-            _intervalRow('tcpMux Keepalive (s)', _keepalive, (v) => _keepalive = v),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _serverId,
+                          readOnly: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Server ID',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _resetId,
+                        child: const Text('Reset ID'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _addr,
+                    decoration: const InputDecoration(
+                      labelText: 'Server Address *',
+                      hintText: 'e.g., frp.example.com',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _port,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Port',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _token,
+                    decoration: const InputDecoration(
+                      labelText: 'Token',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Transport',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  DropdownButtonFormField<String>(
+                    initialValue: _protocol,
+                    decoration: const InputDecoration(
+                      labelText: 'Protocol',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _protocols
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                        .toList(),
+                    onChanged: (v) => setState(() => _protocol = v ?? 'tcp'),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('TCP Multiplexing (tcpMux)'),
+                    value: _tcpMux,
+                    onChanged: (v) => setState(() => _tcpMux = v),
+                  ),
+                  _intervalRow(
+                    'Heartbeat Interval (s)',
+                    _heartbeatInterval,
+                    (v) => _heartbeatInterval = v,
+                  ),
+                  _intervalRow(
+                    'Heartbeat Timeout (s)',
+                    _heartbeatTimeout,
+                    (v) => _heartbeatTimeout = v,
+                  ),
+                  _intervalRow(
+                    'tcpMux Keepalive (s)',
+                    _keepalive,
+                    (v) => _keepalive = v,
+                  ),
                 ],
               ),
             ),
@@ -792,7 +847,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Cancel'),
               ),
-              TextButton(onPressed: _save, child: const Text('Save')),
+              TextButton(onPressed: () => _save(), child: const Text('Save')),
             ],
           ),
         ],
@@ -803,7 +858,9 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
   Widget _intervalRow(String label, int value, ValueChanged<int> onChanged) {
     return Row(
       children: [
-        Expanded(child: Text(label, style: Theme.of(context).textTheme.bodyMedium)),
+        Expanded(
+          child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
+        ),
         DropdownButton<int>(
           value: value,
           items: _intervals
@@ -844,7 +901,9 @@ class _MenuAction extends StatelessWidget {
             const SizedBox(width: 12),
             Text(
               label,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: color),
             ),
           ],
         ),

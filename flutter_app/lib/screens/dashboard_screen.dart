@@ -173,16 +173,6 @@ class DashboardScreen extends StatelessWidget {
 
                   const SizedBox(height: 12),
 
-                  // 流量统计卡片
-                  if (state.trafficEnabled) ...[
-                    _TrafficCard(
-                      upload: state.uploadSpeed,
-                      download: state.downloadSpeed,
-                      total: state.totalBytes,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-
                   // 各应用连接状态卡片
                   AppCard(
                     leading: const Icon(Icons.apps_outlined),
@@ -331,88 +321,6 @@ class _MemoryCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _TrafficCard extends StatelessWidget {
-  final double upload;
-  final double download;
-  final double total;
-  const _TrafficCard({
-    required this.upload,
-    required this.download,
-    required this.total,
-  });
-
-  static String _speed(double v) {
-    if (v >= 1024 * 1024) return '${(v / 1024 / 1024).toStringAsFixed(1)} MB/s';
-    if (v >= 1024) return '${(v / 1024).toStringAsFixed(1)} KB/s';
-    return '${v.toStringAsFixed(0)} B/s';
-  }
-
-  static String _bytes(double v) {
-    if (v >= 1024 * 1024 * 1024) {
-      return '${(v / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
-    }
-    if (v >= 1024 * 1024) {
-      return '${(v / 1024 / 1024).toStringAsFixed(1)} MB';
-    }
-    if (v >= 1024) {
-      return '${(v / 1024).toStringAsFixed(1)} KB';
-    }
-    return '${v.toStringAsFixed(0)} B';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      leading: const Icon(Icons.data_usage),
-      title: 'Traffic',
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('0 conn', style: Theme.of(context).textTheme.labelSmall),
-          const Icon(Icons.chevron_right, size: 18),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _TrafficColumn(value: _speed(upload), label: 'Upload'),
-          ),
-          Expanded(
-            child: _TrafficColumn(value: _speed(download), label: 'Download'),
-          ),
-          Expanded(
-            child: _TrafficColumn(value: _bytes(total), label: 'Total'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TrafficColumn extends StatelessWidget {
-  final String value;
-  final String label;
-  const _TrafficColumn({required this.value, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      children: [
-        Text(
-          value,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: scheme.primary,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(label, style: Theme.of(context).textTheme.labelSmall),
-      ],
     );
   }
 }

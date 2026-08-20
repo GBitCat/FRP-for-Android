@@ -67,8 +67,9 @@ class SettingsScreen extends StatelessWidget {
     try {
       final zip = ConfigImportExport.buildExportZip(
         appState.configs,
-        appState.server,
-        appState.buildFullToml(),
+        appState.servers,
+        appState.selectedServerId,
+        appState.buildAllServerTomls(),
       );
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/frp_backup.zip')..writeAsBytesSync(zip);
@@ -84,7 +85,7 @@ class SettingsScreen extends StatelessWidget {
         SnackBar(
           content: Text(
             saved != null
-                ? 'Exported backup.zip (json + toml)'
+                ? 'Exported backup.zip (all servers + configs)'
                 : 'Export cancelled',
           ),
         ),
@@ -200,20 +201,6 @@ class SettingsScreen extends StatelessWidget {
                             onChanged: (v) => state.setHideFromRecents(v),
                           ),
                         ),
-                        ListTile(
-                          leading: const Icon(Icons.data_usage),
-                          title: const Text('Traffic statistics'),
-                          subtitle: const Text(
-                            'Monitor real-time traffic speed (may cost CPU)',
-                          ),
-                          trailing: Switch(
-                            value: state.trafficEnabled,
-                            onChanged: (v) {
-                              appState.trafficEnabled = v;
-                              appState.notify();
-                            },
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -225,14 +212,11 @@ class SettingsScreen extends StatelessWidget {
                     child: Column(
                       children: [
                         ListTile(
-                          leading: const Icon(Icons.history),
-                          title: const Text('Log retention'),
-                          subtitle: const Text('Keep logs for 7 days'),
-                        ),
-                        ListTile(
                           leading: const Icon(Icons.list_alt_outlined),
                           title: const Text('View logs'),
-                          subtitle: const Text('Open frpc log viewer'),
+                          subtitle: const Text(
+                            'In-memory log viewer (up to 2000 lines)',
+                          ),
                           onTap: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(
@@ -263,7 +247,7 @@ class SettingsScreen extends StatelessWidget {
                           leading: const Icon(Icons.file_download_outlined),
                           title: const Text('Export Config'),
                           subtitle: const Text(
-                            'Export backup.zip (json + toml)',
+                            'Export all servers and configs (contains plaintext secrets)',
                           ),
                           onTap: () => _exportConfig(context),
                         ),

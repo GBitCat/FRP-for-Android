@@ -31,7 +31,8 @@ class ServerConfig {
     this.tcpMuxKeepaliveInterval = 30,
   });
 
-  bool isValid() => serverAddr.trim().isNotEmpty && serverPort >= 1 && serverPort <= 65535;
+  bool isValid() =>
+      serverAddr.trim().isNotEmpty && serverPort >= 1 && serverPort <= 65535;
 
   static String generateId() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -71,33 +72,33 @@ class ServerConfig {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'serverId': serverId,
-        'serverAddr': serverAddr,
-        'serverPort': serverPort,
-        'token': token,
-        'updatedAt': updatedAt,
-        'protocol': protocol,
-        'tcpMux': tcpMux,
-        'heartbeatInterval': heartbeatInterval,
-        'heartbeatTimeout': heartbeatTimeout,
-        'tcpMuxKeepaliveInterval': tcpMuxKeepaliveInterval,
-      };
+    'id': id,
+    'name': name,
+    'serverId': serverId,
+    'serverAddr': serverAddr,
+    'serverPort': serverPort,
+    'token': token,
+    'updatedAt': updatedAt,
+    'protocol': protocol,
+    'tcpMux': tcpMux,
+    'heartbeatInterval': heartbeatInterval,
+    'heartbeatTimeout': heartbeatTimeout,
+    'tcpMuxKeepaliveInterval': tcpMuxKeepaliveInterval,
+  };
 
   factory ServerConfig.fromJson(Map<String, dynamic> j) => ServerConfig(
-        id: (j['id'] as num?)?.toInt() ?? 1,
-        name: j['name'] as String? ?? 'FRPS Server',
-        serverId: j['serverId'] as String? ?? '',
-        serverAddr: j['serverAddr'] as String? ?? '',
-        serverPort: (j['serverPort'] as num?)?.toInt() ?? 7000,
-        token: j['token'] as String? ?? '',
-        updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
-        protocol: j['protocol'] as String? ?? 'tcp',
-        tcpMux: j['tcpMux'] as bool? ?? true,
-        heartbeatInterval: (j['heartbeatInterval'] as num?)?.toInt() ?? 30,
-        heartbeatTimeout: (j['heartbeatTimeout'] as num?)?.toInt() ?? 90,
-        tcpMuxKeepaliveInterval:
-            (j['tcpMuxKeepaliveInterval'] as num?)?.toInt() ?? 30,
-      );
+    id: (j['id'] as num?)?.toInt() ?? 1,
+    name: j['name'] as String? ?? 'FRPS Server',
+    serverId: j['serverId'] as String? ?? '',
+    serverAddr: j['serverAddr'] as String? ?? '',
+    serverPort: (j['serverPort'] as num?)?.toInt() ?? 7000,
+    token: j['token'] as String? ?? '',
+    updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
+    protocol: j['protocol'] as String? ?? 'tcp',
+    tcpMux: j['tcpMux'] as bool? ?? true,
+    heartbeatInterval: (j['heartbeatInterval'] as num?)?.toInt() ?? 30,
+    heartbeatTimeout: (j['heartbeatTimeout'] as num?)?.toInt() ?? 90,
+    tcpMuxKeepaliveInterval:
+        (j['tcpMuxKeepaliveInterval'] as num?)?.toInt() ?? 30,
+  );
 }

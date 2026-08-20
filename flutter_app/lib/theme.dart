@@ -21,11 +21,13 @@ class AppTheme {
 
   static ThemeData light(Color accent) {
     final scheme = ColorScheme.fromSeed(seedColor: accent);
-    return _base(scheme.copyWith(
-      surface: Colors.white,
-      surfaceContainerLow: Colors.white,
-      surfaceContainerHighest: const Color(0xFFF0F2F7),
-    ));
+    return _base(
+      scheme.copyWith(
+        surface: Colors.white,
+        surfaceContainerLow: Colors.white,
+        surfaceContainerHighest: const Color(0xFFF0F2F7),
+      ),
+    );
   }
 
   static ThemeData dark(Color accent) {
@@ -33,11 +35,13 @@ class AppTheme {
       seedColor: accent,
       brightness: Brightness.dark,
     );
-    return _base(scheme.copyWith(
-      surface: const Color(0xFF171A21),
-      surfaceContainerLow: const Color(0xFF171A21),
-      surfaceContainerHighest: const Color(0xFF22262F),
-    ));
+    return _base(
+      scheme.copyWith(
+        surface: const Color(0xFF171A21),
+        surfaceContainerLow: const Color(0xFF171A21),
+        surfaceContainerHighest: const Color(0xFF22262F),
+      ),
+    );
   }
 
   static ThemeData _base(ColorScheme scheme) {
@@ -64,9 +68,7 @@ class AppTheme {
         elevation: 2,
         color: scheme.surfaceContainerLow,
         surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         margin: EdgeInsets.zero,
       ),
       navigationBarTheme: NavigationBarThemeData(
