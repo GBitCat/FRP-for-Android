@@ -1,6 +1,6 @@
 # FRP for Android
 
-一个基于 Flutter 的 Android frpc 客户端：在手机上运行 frpc，通过 **STCP / XTCP** 安全访问内网设备（SSH、ADB 等），支持 P2P 打洞与 STCP 中继回落。
+一个基于 Flutter 的 Android frpc 客户端：在手机上运行 frpc，通过 **STCP / XTCP / XUDP** 安全访问内网设备，支持 TCP/UDP P2P、自动中继与路径恢复。
 
 ![Platform](https://img.shields.io/badge/platform-Android-green)
 ![Arch](https://img.shields.io/badge/arch-arm64--v8a-blue)
@@ -11,6 +11,7 @@
 ### 远程访问
 - ✅ **STCP / XTCP 应用配置**：手机作为 visitor，安全访问对端 frpc 暴露的服务（SSH、ADB 等）
 - ✅ **XTCP P2P 打洞**：NAT 打洞直连，失败自动回落 STCP 中继（`fallbackTo`）
+- ✅ **XUDP P2P**：基于 frp-xudp 的 QUIC DATAGRAM，P2P 失败时自动 Relay，并周期恢复直连
 - ✅ **分组管理**：同一应用的 stcp/xtcp 归为一组，仪表盘按应用显示连接状态
 
 ### 配置管理
@@ -18,7 +19,7 @@
 - ✅ **应用配置**：表单式编辑（协议、本地 IP/端口、secretKey、加密/压缩、fallback）+ 手动编写 TOML
 - ✅ **Server 配置预览**：全局段 + 该 Server 下所有启用应用配置拼接，带分组注释
 - ✅ **对端配置推导**：一键生成对端 frpc 配置并复制
-- ✅ **导入 / 导出**：JSON + 完整 TOML 打包为 zip
+- ✅ **导入 / 导出**：默认脱敏 zip；需要迁移凭据时使用密码加密备份
 
 ### 仪表盘
 - ✅ **Server 卡片**：一键开关、连接状态（Active / 未启动）、连接方式（P2P / 中继）
@@ -63,7 +64,9 @@ flutter build apk --release
 # 输出：build/app/outputs/flutter-apk/app-release.apk
 ```
 
-> `libfrpc.so` 已打包在 `android/app/src/main/jniLibs/arm64-v8a/`，无需额外下载。
+> `libfrpc.so` 来自 `GBitCat/frp-xudp` 的校验发布资产，已打包在
+> `android/app/src/main/jniLibs/arm64-v8a/`，无需额外下载。当前 APK 仅支持
+> `arm64-v8a`；版本、摘要和更新流程见 [FRPC_BINARY.md](FRPC_BINARY.md)。
 
 ## 📁 项目结构
 
@@ -101,7 +104,7 @@ FRP-for-Android/
 ### 配置区
 - **Server**：管理多个 frps 服务器连接；可命名、编辑、预览拼接配置、切换当前 Server
 - **应用配置**：添加 STCP / XTCP / 手动编写配置；同组配置归为一个应用（仪表盘统一显示状态）
-- **导入 / 导出**：设置区可将配置导出为 `backup.zip`（JSON + 完整 TOML），也可导入恢复
+- **导入 / 导出**：默认导出不含凭据；密码加密备份可安全迁移完整配置
 
 ### 仪表盘
 - **Server 卡片**：开关启动 / 停止，显示 Active / 未启动与连接方式

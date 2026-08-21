@@ -1,14 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-# 测试脚本
-echo "Running tests..."
-
-# 运行单元测试
-echo "Running unit tests..."
-./gradlew test
-
-# 运行Android测试
-echo "Running Android tests..."
-./gradlew connectedAndroidTest
-
-echo "Tests completed!"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_dir/flutter_app"
+flutter pub get
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze
+flutter test
+./android/gradlew -p android app:assembleDebugAndroidTest --no-daemon

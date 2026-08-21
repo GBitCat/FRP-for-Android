@@ -11,8 +11,7 @@
         android:label="FRP Android"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:allowBackup="false"
-        android:extractNativeLibs="true">
+        android:allowBackup="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"

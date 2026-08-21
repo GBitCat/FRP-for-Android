@@ -360,15 +360,19 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
   }
 
   String _derivePeerConfig() {
-    final stcpName = _stcpName.isEmpty ? _autoStcpName : _stcpName;
     final peerIp = _localIp.isEmpty ? '127.0.0.1' : _localIp;
     final peerPort = int.tryParse(_localPort) ?? 22;
     final key = _secretKey;
-    return '# ===== Peer frpc config (run on the target machine) =====\n'
+    final header =
+        '# ===== Peer frpc config (run on the target machine) =====\n'
         '# Adjust localIP / localPort to the actual service address on the peer\n'
         '# (e.g. localIP = "192.168.3.18", localPort = 22).\n'
-        '# secretKey / encryption / compression must match this app.\n\n'
-        '${proxyBlockForPeer(_effectiveName, 'xtcp', key, peerIp, peerPort, useEncryption: _useEncryption, useCompression: _useCompression)}\n'
+        '# secretKey / encryption / compression must match this app.\n\n';
+    if (_protocol != 'xtcp') {
+      return '$header${proxyBlockForPeer(_effectiveName, _protocol, key, peerIp, peerPort, useEncryption: _useEncryption, useCompression: _useCompression)}';
+    }
+    final stcpName = _stcpName.isEmpty ? _autoStcpName : _stcpName;
+    return '$header${proxyBlockForPeer(_effectiveName, 'xtcp', key, peerIp, peerPort, useEncryption: _useEncryption, useCompression: _useCompression)}\n'
         '${proxyBlockForPeer(stcpName, 'stcp', _stcpSecretKey.isEmpty ? key : _stcpSecretKey, peerIp, peerPort, useEncryption: _useEncryption, useCompression: _useCompression)}';
   }
 

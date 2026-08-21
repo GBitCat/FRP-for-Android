@@ -4,8 +4,8 @@
 # Global rule:
 * @gbitcat
 
-# Android app code
-app/ @gbitcat
+# Flutter and Android host code
+flutter_app/ @gbitcat
 
 # Build scripts
 scripts/ @gbitcat

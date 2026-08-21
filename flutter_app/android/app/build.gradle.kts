@@ -35,6 +35,12 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // frpc-xudp currently publishes an Android binary for arm64 only.
+        // Restrict installation so other ABIs cannot install a seemingly valid
+        // APK that has no executable frpc core.
+        ndk {
+            abiFilters += setOf("arm64-v8a")
+        }
     }
 
     signingConfigs {
@@ -63,6 +69,11 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            excludes += setOf(
+                "**/armeabi-v7a/*.so",
+                "**/x86/*.so",
+                "**/x86_64/*.so",
+            )
         }
     }
 }

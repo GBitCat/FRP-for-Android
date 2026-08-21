@@ -22,6 +22,7 @@ import java.io.File
 import java.io.InputStreamReader
 import java.net.InetAddress
 import java.util.ArrayDeque
+import java.util.UUID
 
 /**
  * frpc 前台服务：
@@ -35,10 +36,20 @@ class FrpcService : Service() {
         private const val NOTIF_ID = 1001
         private const val PREFS = "frp_state"
         private const val KEY_WAS_RUNNING = "was_running"
-        private const val KEY_LAST_CONFIG = "last_config_path"
+        private const val KEY_LAST_CONFIG_PAYLOAD = "last_config_payload"
+        private const val KEY_PENDING_START_ID = "pending_start_id"
         private const val ACTION_START = "com.frp.frp_app.action.START"
         private const val ACTION_RESTORE = "com.frp.frp_app.action.RESTORE"
-        private const val EXTRA_CONFIG_PATH = "config_path"
+        private const val EXTRA_CONFIG_CONTENT = "config_content"
+        private const val EXTRA_START_ID = "start_id"
+        private const val RUNTIME_CONFIG_NAME = "frpc-runtime.toml"
+        private const val MAX_CONFIG_BYTES = 512 * 1024
+
+        internal fun redactLogLine(line: String): String = line.replace(
+            Regex(
+                "(?i)\\b(token|secretKey|password|clientSecret)\\s*[=:]\\s*(\\\"[^\\\"]*\\\"|[^\\s,;]+)"
+            )
+        ) { match -> "${match.groupValues[1]}=***" }
 
         @Volatile
         var instance: FrpcService? = null
@@ -51,17 +62,26 @@ class FrpcService : Service() {
         var channel: MethodChannel? = null
 
         /** 提交用户启动请求，实际进程启动在 onStartCommand 中串行执行。 */
-        fun start(context: Context, configPath: String?): Boolean {
-            if (configPath.isNullOrBlank()) return false
+        fun start(context: Context, configContent: String?): Boolean {
+            if (configContent.isNullOrBlank() ||
+                configContent.toByteArray(Charsets.UTF_8).size > MAX_CONFIG_BYTES
+            ) return false
+            val startId = UUID.randomUUID().toString()
+            val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
+            if (!prefs.edit().putString(KEY_PENDING_START_ID, startId).commit()) return false
             return try {
                 startServiceIntent(
                     context,
                     Intent(context, FrpcService::class.java)
                         .setAction(ACTION_START)
-                        .putExtra(EXTRA_CONFIG_PATH, configPath)
+                        .putExtra(EXTRA_CONFIG_CONTENT, configContent)
+                        .putExtra(EXTRA_START_ID, startId)
                 )
                 true
             } catch (e: Exception) {
+                if (prefs.getString(KEY_PENDING_START_ID, null) == startId) {
+                    prefs.edit().remove(KEY_PENDING_START_ID).commit()
+                }
                 Log.e("FrpEngine", "unable to schedule frpc service", e)
                 false
             }
@@ -81,18 +101,29 @@ class FrpcService : Service() {
 
         /** 停止用户运行意图，即使 Service 还没有完成创建也能生效。 */
         fun stop(context: Context) {
-            // commit is intentional: a queued first START must not race this stop
-            // and restore a stale user intent from asynchronously-applied prefs.
-            context.getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean(KEY_WAS_RUNNING, false)
-                .remove(KEY_LAST_CONFIG)
-                .commit()
             val svc = instance
             if (svc != null) {
                 svc.stopFrpc()
             } else {
+                val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                // commit is intentional: a queued first START must not race this
+                // stop and restore a stale asynchronously-applied user intent.
+                prefs.edit()
+                    .putBoolean(KEY_WAS_RUNNING, false)
+                    .remove(KEY_LAST_CONFIG_PAYLOAD)
+                    .remove(KEY_PENDING_START_ID)
+                    .commit()
+                deleteRuntimeConfig(context)
                 context.stopService(Intent(context, FrpcService::class.java))
             }
+        }
+
+        internal fun runtimeConfigFile(context: Context): File =
+            File(context.noBackupFilesDir, RUNTIME_CONFIG_NAME)
+
+        private fun deleteRuntimeConfig(context: Context) {
+            runtimeConfigFile(context).delete()
+            File(context.noBackupFilesDir, "$RUNTIME_CONFIG_NAME.pending").delete()
         }
 
         /**
@@ -158,8 +189,13 @@ class FrpcService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 restored = true
-                val configPath = intent.getStringExtra(EXTRA_CONFIG_PATH)
-                if (!startFrpc(configPath)) {
+                val configContent = intent.getStringExtra(EXTRA_CONFIG_CONTENT)
+                val requestId = intent.getStringExtra(EXTRA_START_ID)
+                val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+                val accepted = !requestId.isNullOrEmpty() &&
+                    prefs.getString(KEY_PENDING_START_ID, null) == requestId
+                if (accepted) prefs.edit().remove(KEY_PENDING_START_ID).commit()
+                if (!accepted || !startFrpc(configContent)) {
                     updateNotification("FRPC 启动失败")
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -181,13 +217,13 @@ class FrpcService : Service() {
         healthHandler?.removeCallbacks(healthRunnable)
         unregisterNetworkMonitor()
         // 系统回收 Service 时保留用户运行意图，便于 START_STICKY 恢复。
-        stopFrpcInternal(clearRunningIntent = false)
+        stopFrpcInternal(clearRunningIntent = false, deleteConfig = true)
         super.onDestroy()
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.e("FrpEngine", "foreground service timed out, type=$fgsType")
-        stopFrpcInternal(clearRunningIntent = true)
+        stopFrpcInternal(clearRunningIntent = true, deleteConfig = true)
         stopSelf()
     }
 
@@ -205,9 +241,15 @@ class FrpcService : Service() {
         if (System.currentTimeMillis() - lastStartMs < 10_000) return
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_WAS_RUNNING, false)) return
-        val cfg = prefs.getString(KEY_LAST_CONFIG, null)
-        if (!cfg.isNullOrEmpty() && File(cfg).exists()) {
-            startFrpc(cfg)
+        val payload = prefs.getString(KEY_LAST_CONFIG_PAYLOAD, null)
+        if (!payload.isNullOrEmpty()) {
+            try {
+                startFrpc(SecureStringCodec.decrypt(payload), payload)
+            } catch (e: Exception) {
+                Log.e("FrpEngine", "unable to decrypt recovery configuration", e)
+                saveRunning(false, null)
+                deleteRuntimeConfig(this)
+            }
         }
     }
 
@@ -222,11 +264,14 @@ class FrpcService : Service() {
         }, 3_000)
     }
 
-    fun startFrpc(configPath: String?): Boolean {
-        stopFrpcInternal(clearRunningIntent = true)
+    fun startFrpc(configContent: String?, encryptedPayload: String? = null): Boolean {
+        stopFrpcInternal(clearRunningIntent = true, deleteConfig = true)
         val frpc = frpcBinary()
-        if (!frpc.exists() || configPath.isNullOrEmpty() || !File(configPath).exists()) {
+        if (!frpc.exists() || configContent.isNullOrBlank() ||
+            configContent.toByteArray(Charsets.UTF_8).size > MAX_CONFIG_BYTES
+        ) {
             sendStatus("server", "error", "frpc binary or config missing")
+            deleteRuntimeConfig(this)
             return false
         }
         return try {
@@ -235,9 +280,7 @@ class FrpcService : Service() {
                 "nameserver 8.8.8.8\nnameserver 114.114.114.114\nnameserver 1.1.1.1\n"
             )
             // STUN 域名解析为 IP（Android 上 Go DNS 走 [::1]:53 会被拒）
-            val cfgFile = File(configPath)
-            val cfgText = cfgFile.readText()
-            val patchedCfg = cfgText.replace(
+            val patchedCfg = configContent.replace(
                 Regex("natHoleStunServer = \"([^\"]+)\"")
             ) { m ->
                 val original = m.groupValues[1]
@@ -250,8 +293,8 @@ class FrpcService : Service() {
                 }
                 "natHoleStunServer = \"$resolved:$port\""
             }
-            if (patchedCfg != cfgText) cfgFile.writeText(patchedCfg)
-            val pb = ProcessBuilder(frpc.absolutePath, "-c", configPath)
+            val cfgFile = writeRuntimeConfig(patchedCfg)
+            val pb = ProcessBuilder(frpc.absolutePath, "-c", cfgFile.absolutePath)
             pb.environment()["GODEBUG"] = "netdns=go"
             pb.environment()["RES_OPTIONS"] = "ndots:1"
             pb.environment()["RESOLV_CONF"] = resolv.absolutePath
@@ -262,7 +305,9 @@ class FrpcService : Service() {
             lastStartMs = System.currentTimeMillis()
             Log.d("FrpEngine", "frpc started, pid=$frpcPid")
             synchronized(logsLock) { logs.clear() }
-            saveRunning(true, configPath)
+            check(saveRunning(true, encryptedPayload ?: SecureStringCodec.encrypt(configContent))) {
+                "unable to persist encrypted recovery configuration"
+            }
             updateNotification("FRPC 正在运行")
             sendStatus("server", "connecting", "Starting frpc...")
 
@@ -271,7 +316,10 @@ class FrpcService : Service() {
                     val reader = BufferedReader(InputStreamReader(process.inputStream))
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        line?.let { onFrpcLine(it) }
+                        line?.let {
+                            deleteRuntimeConfig(this)
+                            onFrpcLine(it)
+                        }
                     }
                 } catch (e: Exception) {
                 }
@@ -283,6 +331,7 @@ class FrpcService : Service() {
                     if (frpcProcess === process) {
                         frpcProcess = null
                         frpcPid = -1
+                        deleteRuntimeConfig(this)
                         // 意外退出：保留 was_running（用户运行意图），延迟自动重启
                         sendStatus("server", "disconnected", "frpc exited ($code)")
                         sendAppReset()
@@ -292,17 +341,21 @@ class FrpcService : Service() {
                     // ignore
                 }
             }.apply { start() }
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (frpcProcess === process && process.isAlive) deleteRuntimeConfig(this)
+            }, 10_000)
             true
         } catch (e: Exception) {
             Log.e("FrpEngine", "start failed", e)
             sendStatus("server", "error", "Failed to start frpc")
+            stopFrpcInternal(clearRunningIntent = true, deleteConfig = true)
             false
         }
     }
 
     /** 用户主动停止：停止 frpc 并退出前台服务 */
     fun stopFrpc() {
-        stopFrpcInternal(clearRunningIntent = true)
+        stopFrpcInternal(clearRunningIntent = true, deleteConfig = true)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -313,16 +366,14 @@ class FrpcService : Service() {
     fun getMemoryMb(): Double {
         val appRss = rssMb(android.os.Process.myPid())
         val frpcRss = if (frpcPid > 0) rssMb(frpcPid) else 0.0
-        val total = appRss + frpcRss
-        Log.d("FrpEngine", "memory: app=${"%.1f".format(appRss)} frpc=$frpcPid:${"%.1f".format(frpcRss)} total=${"%.1f".format(total)}")
-        return total
+        return appRss + frpcRss
     }
 
     // ---- 内部实现 ----
 
     private fun frpcBinary(): File = File(applicationInfo.nativeLibraryDir, "libfrpc.so")
 
-    private fun stopFrpcInternal(clearRunningIntent: Boolean) {
+    private fun stopFrpcInternal(clearRunningIntent: Boolean, deleteConfig: Boolean) {
         val process = frpcProcess
         // 先清空引用，防止 monitorThread 把主动停止误判为异常退出。
         frpcProcess = null
@@ -338,6 +389,7 @@ class FrpcService : Service() {
         }
         restartPending = false
         if (clearRunningIntent) saveRunning(false, null)
+        if (deleteConfig) deleteRuntimeConfig(this)
         sendStatus("server", "disconnected", "")
         sendAppReset()
     }
@@ -388,15 +440,36 @@ class FrpcService : Service() {
         }
     }
 
-    private fun saveRunning(running: Boolean, configPath: String?) {
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+    private fun writeRuntimeConfig(content: String): File {
+        val target = runtimeConfigFile(this)
+        val pending = File(noBackupFilesDir, "$RUNTIME_CONFIG_NAME.pending")
+        pending.delete()
+        pending.createNewFile()
+        pending.setReadable(false, false)
+        pending.setWritable(false, false)
+        pending.setExecutable(false, false)
+        check(pending.setReadable(true, true)) { "unable to restrict config read access" }
+        check(pending.setWritable(true, true)) { "unable to restrict config write access" }
+        pending.writeText(content)
+        if (target.exists()) check(target.delete()) { "unable to replace runtime config" }
+        check(pending.renameTo(target)) { "unable to install runtime config" }
+        return target
+    }
+
+    private fun saveRunning(running: Boolean, encryptedPayload: String?): Boolean {
+        val editor = getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putBoolean(KEY_WAS_RUNNING, running)
-            .putString(KEY_LAST_CONFIG, configPath)
-            .apply()
+            .remove(KEY_PENDING_START_ID)
+        if (running && !encryptedPayload.isNullOrEmpty()) {
+            editor.putString(KEY_LAST_CONFIG_PAYLOAD, encryptedPayload)
+        } else {
+            editor.remove(KEY_LAST_CONFIG_PAYLOAD)
+        }
+        return editor.commit()
     }
 
     private fun onFrpcLine(raw: String) {
-        val line = raw.replace(Regex("\u001B\\[[;\\d]*m"), "")
+        val line = redactLogLine(raw.replace(Regex("\u001B\\[[;\\d]*m"), ""))
         synchronized(logsLock) {
             logs.addLast(line)
             if (logs.size > 2000) logs.removeFirst()
@@ -416,11 +489,16 @@ class FrpcService : Service() {
                 sendStatus("server", "error", "Server connection failed")
 
             msg.contains("establishing nat hole connection successful", ignoreCase = true) ||
-                msg.contains("punch ok", ignoreCase = true) ->
+                msg.contains("punch ok", ignoreCase = true) ||
+                msg.contains("xudp tunnel established via p2p", ignoreCase = true) ||
+                msg.contains("xudp p2p quic datagram transport ready", ignoreCase = true) ||
+                msg.contains("xudp relay recovered p2p path", ignoreCase = true) ->
                 sendAppStatus(extractName(msg), "p2p")
             msg.contains("nathole prepare error", ignoreCase = true) ||
                 msg.contains("make hole error", ignoreCase = true) ||
-                msg.contains("nathole precheck error", ignoreCase = true) ->
+                msg.contains("nathole precheck error", ignoreCase = true) ||
+                msg.contains("xudp p2p failed, falling back to relay", ignoreCase = true) ||
+                msg.contains("xudp relay: relay visitor conn established", ignoreCase = true) ->
                 sendAppStatus(extractName(msg), "relay")
             msg.contains("doesn't exist", ignoreCase = true) ->
                 sendAppStatus(extractName(msg), "error")
@@ -436,7 +514,7 @@ class FrpcService : Service() {
 
     private fun extractName(msg: String): String {
         val m = Regex(
-            "\\[([^\\]]+)\\] (establishing|nathole|punch|make hole|open tunnel|for|connection established)"
+            "\\[([^\\]]+)\\] (xudp|establishing|nathole|punch|make hole|open tunnel|for|connection established)"
         )
             .find(msg)
         return m?.groupValues?.get(1) ?: ""

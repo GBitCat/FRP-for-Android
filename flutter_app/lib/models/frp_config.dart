@@ -98,8 +98,9 @@ class FrpConfig {
     'stcp',
     'sudp',
     'xtcp',
+    'xudp',
   ];
-  static const List<String> secretProtocols = ['stcp', 'sudp', 'xtcp'];
+  static const List<String> secretProtocols = ['stcp', 'sudp', 'xtcp', 'xudp'];
 
   bool needsSecretKey() => secretProtocols.contains(protocol.toLowerCase());
   bool isVisitor() => role == 'visitor';

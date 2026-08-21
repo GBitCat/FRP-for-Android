@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../services/backup_crypto.dart';
 import '../services/config_import_export.dart';
 import '../services/frp_engine.dart';
 import '../state/app_state.dart';
@@ -13,6 +14,8 @@ import 'logs_screen.dart';
 
 /// 缓存版本号，避免每次重建都走原生调用
 final Future<String> _appVersion = FrpEngine.instance.getVersionName();
+
+enum _ExportMode { redacted, encrypted }
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -31,12 +34,33 @@ class SettingsScreen extends StatelessWidget {
     try {
       final path = await FlutterFileDialog.pickFile(
         params: OpenFileDialogParams(
-          mimeTypesFilter: ['application/json', 'application/zip'],
+          mimeTypesFilter: [
+            'application/json',
+            'application/zip',
+            'application/octet-stream',
+          ],
           copyFileToCacheDir: true,
         ),
       );
       if (path == null || path.isEmpty) return;
-      final bytes = await File(path).readAsBytes();
+      final file = File(path);
+      if (await file.length() > BackupCrypto.maxEncryptedBytes) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Config file exceeds the 5 MiB limit')),
+        );
+        return;
+      }
+      var bytes = await file.readAsBytes();
+      if (BackupCrypto.isEncrypted(bytes)) {
+        if (!context.mounted) return;
+        final password = await _requestPassword(
+          context,
+          title: 'Decrypt backup',
+        );
+        if (password == null || !context.mounted) return;
+        bytes = await BackupCrypto.decrypt(bytes, password);
+      }
       final data = ConfigImportExport.parseImportBytes(bytes);
       final count = await appState.applyImport(data);
       if (!context.mounted) return;
@@ -45,6 +69,8 @@ class SettingsScreen extends StatelessWidget {
           content: Text(
             data == null
                 ? 'Failed to parse config file'
+                : data.redacted
+                ? 'Imported $count redacted configurations; re-enter credentials'
                 : 'Imported $count configurations',
           ),
         ),
@@ -64,20 +90,68 @@ class SettingsScreen extends StatelessWidget {
       ).showSnackBar(const SnackBar(content: Text('No configs to export')));
       return;
     }
+    final mode = await showDialog<_ExportMode>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Export configuration'),
+        content: const Text(
+          'Redacted export omits tokens, secret keys and manual TOML. '
+          'Use an encrypted backup when credentials must be portable.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_ExportMode.encrypted),
+            child: const Text('Encrypted'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_ExportMode.redacted),
+            child: const Text('Export redacted'),
+          ),
+        ],
+      ),
+    );
+    if (mode == null || !context.mounted) return;
+    String? password;
+    if (mode == _ExportMode.encrypted) {
+      password = await _requestPassword(
+        context,
+        title: 'Protect backup',
+        confirm: true,
+      );
+      if (password == null || !context.mounted) return;
+    }
+    File? temporaryFile;
     try {
-      final zip = ConfigImportExport.buildExportZip(
+      var bytes = ConfigImportExport.buildExportZip(
         appState.configs,
         appState.servers,
         appState.selectedServerId,
         appState.buildAllServerTomls(),
+        includeSecrets: mode == _ExportMode.encrypted,
       );
+      if (mode == _ExportMode.encrypted) {
+        bytes = await BackupCrypto.encrypt(bytes, password!);
+      }
       final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/frp_backup.zip')..writeAsBytesSync(zip);
+      final encrypted = mode == _ExportMode.encrypted;
+      final fileName = encrypted
+          ? 'frp_backup.frpbackup'
+          : 'frp_backup_redacted.zip';
+      temporaryFile = File('${dir.path}/$fileName');
+      await temporaryFile.writeAsBytes(bytes, flush: true);
       final saved = await FlutterFileDialog.saveFile(
         params: SaveFileDialogParams(
-          sourceFilePath: file.path,
-          fileName: 'frp_backup.zip',
-          mimeTypesFilter: ['application/zip'],
+          sourceFilePath: temporaryFile.path,
+          fileName: fileName,
+          mimeTypesFilter: [
+            encrypted ? 'application/octet-stream' : 'application/zip',
+          ],
         ),
       );
       if (!context.mounted) return;
@@ -85,7 +159,9 @@ class SettingsScreen extends StatelessWidget {
         SnackBar(
           content: Text(
             saved != null
-                ? 'Exported backup.zip (all servers + configs)'
+                ? encrypted
+                      ? 'Exported password-encrypted backup'
+                      : 'Exported redacted backup without credentials'
                 : 'Export cancelled',
           ),
         ),
@@ -95,6 +171,79 @@ class SettingsScreen extends StatelessWidget {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Failed to export config')));
+    } finally {
+      try {
+        await temporaryFile?.delete();
+      } catch (_) {}
+    }
+  }
+
+  Future<String?> _requestPassword(
+    BuildContext context, {
+    required String title,
+    bool confirm = false,
+  }) async {
+    final password = TextEditingController();
+    final confirmation = TextEditingController();
+    String? error;
+    try {
+      return await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text(title),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: password,
+                  obscureText: true,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    labelText: 'Password (12+ characters)',
+                    errorText: error,
+                  ),
+                ),
+                if (confirm) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: confirmation,
+                    obscureText: true,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration: const InputDecoration(
+                      labelText: 'Confirm password',
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  if (password.text.length < 12) {
+                    setState(() => error = 'Use at least 12 characters');
+                  } else if (confirm && password.text != confirmation.text) {
+                    setState(() => error = 'Passwords do not match');
+                  } else {
+                    Navigator.of(dialogContext).pop(password.text);
+                  }
+                },
+                child: Text(confirm ? 'Encrypt' : 'Decrypt'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      password.dispose();
+      confirmation.dispose();
     }
   }
 
@@ -239,7 +388,7 @@ class SettingsScreen extends StatelessWidget {
                           leading: const Icon(Icons.file_upload_outlined),
                           title: const Text('Import Config'),
                           subtitle: const Text(
-                            'Import from JSON / zip backup file',
+                            'Import JSON, zip or password-encrypted backup',
                           ),
                           onTap: () => _importConfig(context),
                         ),
@@ -247,7 +396,7 @@ class SettingsScreen extends StatelessWidget {
                           leading: const Icon(Icons.file_download_outlined),
                           title: const Text('Export Config'),
                           subtitle: const Text(
-                            'Export all servers and configs (contains plaintext secrets)',
+                            'Redacted by default; encrypted export can include credentials',
                           ),
                           onTap: () => _exportConfig(context),
                         ),

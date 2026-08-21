@@ -7,9 +7,16 @@ signing material from these environment variables:
 - `FRP_RELEASE_STORE_PASSWORD`
 - `FRP_RELEASE_KEY_ALIAS`
 - `FRP_RELEASE_KEY_PASSWORD`
+- `FRP_RELEASE_CERT_SHA256`
 
 The GitHub release workflow additionally expects the keystore as the
-`FRP_RELEASE_KEYSTORE_BASE64` repository secret.
+`FRP_RELEASE_KEYSTORE_BASE64` repository secret. Configure a protected
+`release` environment with required reviewers; store all six values as
+environment secrets. `FRP_RELEASE_CERT_SHA256` must be the expected signer
+certificate fingerprint, not a value calculated from the current build.
+Keep the `release` environment variable `FRP_SIGNING_MIGRATION_APPROVED`
+unset until the migration and upgrade-install tests below are complete. The
+workflow fails closed unless that environment variable is exactly `true`.
 
 The key previously committed to this repository must be treated as compromised.
 Removing it from the current tree does not remove it from Git history. Existing
@@ -27,7 +34,7 @@ Migration procedure:
    environment and create an APK Signature Scheme v3 signing lineage to the new
    key on supported Android versions. Older devices may require a separately
    named package and an explicit data migration.
-4. Generate the new key in a protected secret manager/HSM, configure the five
+4. Generate the new key in a protected secret manager/HSM, configure the six
    GitHub secrets above, and require review on the release environment.
 5. Verify the signed artifact certificate and test upgrade installs from the
    previous production APK before publishing. The release workflow also runs

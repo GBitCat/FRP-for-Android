@@ -51,6 +51,32 @@ void main() {
     expect(toml, contains('[visitors.transport]'));
   });
 
+  test('XUDP proxy and visitor use the fork configuration schema', () {
+    const proxy = FrpConfig(
+      name: 'game',
+      protocol: 'xudp',
+      role: 'server',
+      localIp: '127.0.0.1',
+      localPort: 2000,
+      secretKey: 'secret',
+    );
+    const visitor = FrpConfig(
+      name: 'game-visitor',
+      protocol: 'xudp',
+      role: 'visitor',
+      serverName: 'game',
+      bindAddr: '127.0.0.1',
+      bindPort: 2000,
+      secretKey: 'secret',
+    );
+    expect(configBlock(proxy), contains('type = "xudp"'));
+    expect(configBlock(proxy), contains('localPort = 2000'));
+    expect(configBlock(proxy), isNot(contains('remotePort')));
+    expect(configBlock(visitor), contains('[[visitors]]'));
+    expect(configBlock(visitor), contains('serverName = "game"'));
+    expect(configBlock(visitor), contains('bindPort = 2000'));
+  });
+
   test('manual TOML is preserved without generated fields', () {
     const manual = '[[visitors]]\nname = "manual"\ntype = "stcp"\n';
     expect(configBlock(const FrpConfig(manualToml: manual)), manual);

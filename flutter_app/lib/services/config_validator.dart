@@ -6,6 +6,9 @@ class ConfigValidator {
   static String? validate(FrpConfig config) {
     if (config.name.trim().isEmpty) return 'Name is required';
     if (config.needsSecretKey()) {
+      if ((config.secretKey ?? '').trim().isEmpty) {
+        return 'Secret key is required for ${config.protocol.toUpperCase()}';
+      }
       if (config.isVisitor() && (config.serverName ?? '').trim().isEmpty) {
         return 'Server name is required for visitor';
       }

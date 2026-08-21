@@ -90,4 +90,32 @@ void main() {
       'ssh-xtcp',
     );
   });
+
+  test('XUDP is validated as a secret proxy and visitor protocol', () {
+    expect(
+      ConfigValidator.validate(
+        const FrpConfig(
+          name: 'game',
+          protocol: 'xudp',
+          role: 'server',
+          localPort: 2000,
+          secretKey: 'secret',
+        ),
+      ),
+      isNull,
+    );
+    expect(
+      ConfigValidator.validate(
+        const FrpConfig(
+          name: 'game-client',
+          protocol: 'xudp',
+          role: 'visitor',
+          serverName: 'game',
+          bindPort: 2000,
+          secretKey: 'secret',
+        ),
+      ),
+      isNull,
+    );
+  });
 }

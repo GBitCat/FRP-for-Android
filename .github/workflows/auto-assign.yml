@@ -10,7 +10,7 @@ jobs:
   auto-assign:
     runs-on: ubuntu-latest
     steps:
-      - uses: pozil/auto-assign-issue@v4
+      - uses: pozil/auto-assign-issue@af6beea6bdf1e8eb373f061c5bc168681fc6d011 # v4
         with:
           assignees: gbitcat
           numOfAssignee: 1

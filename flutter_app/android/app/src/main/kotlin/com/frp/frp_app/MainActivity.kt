@@ -35,8 +35,8 @@ class MainActivity : FlutterActivity() {
             ch.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "start" -> {
-                        val configPath = call.argument<String>("configPath")
-                        result.success(FrpcService.start(this, configPath))
+                        val configContent = call.argument<String>("configContent")
+                        result.success(FrpcService.start(this, configContent))
                     }
                     "stop" -> {
                         FrpcService.stop(this)
@@ -74,17 +74,30 @@ class MainActivity : FlutterActivity() {
             "com.frp.app/secure_store"
         ).also { ch ->
             ch.setMethodCallHandler { call, result ->
-                val value = call.argument<String>("value")
-                if (value == null) {
-                    result.error("INVALID_ARGUMENT", "value is required", null)
-                    return@setMethodCallHandler
-                }
                 try {
                     when (call.method) {
-                        "encrypt" -> result.success(SecureStringCodec.encrypt(value))
-                        "decrypt" -> result.success(SecureStringCodec.decrypt(value))
+                        "encrypt" -> result.success(
+                            SecureStringCodec.encrypt(requireNotNull(call.argument("value")))
+                        )
+                        "decrypt" -> result.success(
+                            SecureStringCodec.decrypt(requireNotNull(call.argument("value")))
+                        )
+                        "encryptBackup" -> result.success(
+                            BackupCipher.encrypt(
+                                requireNotNull(call.argument<ByteArray>("data")),
+                                requireNotNull(call.argument<String>("password")),
+                            )
+                        )
+                        "decryptBackup" -> result.success(
+                            BackupCipher.decrypt(
+                                requireNotNull(call.argument<ByteArray>("data")),
+                                requireNotNull(call.argument<String>("password")),
+                            )
+                        )
                         else -> result.notImplemented()
                     }
+                } catch (e: IllegalArgumentException) {
+                    result.error("INVALID_ARGUMENT", e.message, null)
                 } catch (e: Exception) {
                     result.error("SECURE_STORAGE_ERROR", e.message, null)
                 }

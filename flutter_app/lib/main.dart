@@ -36,10 +36,50 @@ class FrpApp extends StatelessWidget {
             theme: AppTheme.light(accent),
             darkTheme: AppTheme.dark(accent),
             themeMode: appState.theme.mode,
-            home: const MainShell(),
+            home: !appState.initialized
+                ? const _InitializationProgress()
+                : appState.initializationError != null
+                ? _InitializationFailure(message: appState.initializationError!)
+                : const MainShell(),
           ),
         );
       },
     );
   }
+}
+
+class _InitializationProgress extends StatelessWidget {
+  const _InitializationProgress();
+
+  @override
+  Widget build(BuildContext context) =>
+      const Scaffold(body: Center(child: CircularProgressIndicator()));
+}
+
+class _InitializationFailure extends StatelessWidget {
+  const _InitializationFailure({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_reset_outlined, size: 48),
+            const SizedBox(height: 16),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: appState.retryInitialization,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
