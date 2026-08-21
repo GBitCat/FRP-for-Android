@@ -35,11 +35,7 @@ jobs:
         java-version: "21"
 
     - name: Set up Flutter
-      uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-      with:
-        flutter-version: "3.44.9"
-        channel: stable
-        cache: true
+      uses: ./.github/actions/setup-flutter
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
