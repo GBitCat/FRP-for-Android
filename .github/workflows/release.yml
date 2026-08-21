@@ -142,7 +142,9 @@ jobs:
           test -n "$new_actual"
           test "$old_actual" = "$old_expected"
           test "$new_actual" = "$new_expected"
-          sha256sum "$apk" > "$apk.sha256"
+          apk_dir=$(dirname "$apk")
+          apk_name=$(basename "$apk")
+          (cd "$apk_dir" && sha256sum "$apk_name" > "$apk_name.sha256")
 
       - name: Delete temporary signing key
         if: ${{ always() }}
