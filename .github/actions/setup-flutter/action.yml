@@ -1,0 +1,25 @@
+name: Set up pinned Flutter SDK
+description: Install the repository's pinned Flutter SDK without nested third-party actions
+
+runs:
+  using: composite
+  steps:
+    - name: Download and verify Flutter 3.44.9
+      shell: bash
+      env:
+        FLUTTER_VERSION: 3.44.9
+        FLUTTER_SHA256: a9120fa4a01048bdef438ddc3a2d4b7389662ea98a95db86eeaf10382bc4efcb
+      run: |
+        set -Eeuo pipefail
+        archive="$RUNNER_TEMP/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
+        sdk_dir="$RUNNER_TEMP/flutter-sdk"
+        curl --fail --silent --show-error --location \
+          "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
+          --output "$archive"
+        printf '%s  %s\n' "$FLUTTER_SHA256" "$archive" | sha256sum --check --strict
+        mkdir "$sdk_dir"
+        tar --extract --xz --file "$archive" --directory "$sdk_dir" --strip-components=1
+        printf '%s\n' "$sdk_dir/bin" >> "$GITHUB_PATH"
+        git config --global --add safe.directory "$sdk_dir"
+        "$sdk_dir/bin/flutter" config --no-analytics
+        "$sdk_dir/bin/flutter" --version
