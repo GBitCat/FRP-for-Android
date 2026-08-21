@@ -14,6 +14,13 @@
 - ✅ **XUDP P2P**：基于 frp-xudp 的 QUIC DATAGRAM，P2P 失败时自动 Relay，并周期恢复直连
 - ✅ **分组管理**：同一应用的 stcp/xtcp 归为一组，仪表盘按应用显示连接状态
 
+> [!IMPORTANT]
+> **XUDP 不能只替换 Android 端。** 同一条 XUDP 链路中的 `frps`、提供服务的
+> `frpc` 和作为 visitor 的 `frpc`（本应用）必须全部部署兼容的
+> [`GBitCat/frp-xudp`](https://github.com/GBitCat/frp-xudp) 版本，建议保持完全相同的
+> Release。不要将官方 `fatedier/frp`、其他 fork 或不同版本与 XUDP 节点混用。
+> 当前 APK 内置版本为 `v0.71.0-v2`，其余节点应优先使用同一版本。
+
 ### 配置管理
 - ✅ **多 Server 连接配置**：命名、8 位 ID、transport 参数（protocol / tcpMux / heartbeat / keepalive）
 - ✅ **应用配置**：表单式编辑（协议、本地 IP/端口、secretKey、加密/压缩、fallback）+ 手动编写 TOML
@@ -42,7 +49,7 @@
 1. **下载 APK**：从 [Releases](https://github.com/GBitCat/FRP-for-Android/releases) 页面下载最新版本（`arm64-v8a`）
 2. **安装并打开**：首次启动会弹出省电策略提醒，建议允许通知并取消电池优化
 3. **添加 Server**：配置区 → Server → 添加你的 frps 服务器（地址、端口、token）
-4. **添加应用配置**：配置区 → 应用 → 添加 STCP / XTCP 应用（选择所属 Server、协议、对端名称、secretKey）
+4. **添加应用配置**：配置区 → 应用 → 添加 STCP / XTCP / XUDP 应用（选择所属 Server、协议、对端名称、secretKey）；使用 XUDP 前请先确认全部节点均已部署兼容的 `frp-xudp`
 5. **启动连接**：仪表盘 → 打开 Server 开关
 6. **访问对端**：在手机上连接本地 visitor 端口（如 `127.0.0.1:39522`）即可访问对端设备
 
@@ -155,8 +162,9 @@ secretKey = "your_secret_key"
 1. **架构**：仅支持 `arm64-v8a`（绝大多数现代 Android 手机）
 2. **Android 版本**：建议 Android 8.0+（API 26+）；Android 13+ 需要允许通知权限
 3. **frps 端**：需在 frps 上配置对应的 stcp/xtcp 代理，且对端设备需运行 frpc 并注册相同 secretKey
-4. **后台驻留**：为保证长时间稳定连接，请允许通知权限、取消电池优化（应用内首次启动会引导跳转），部分国产 ROM 还需在系统设置中允许后台运行
-5. **内存显示**：卡片显示的是 App 与 frpc 进程的 RSS 占用，按设备总内存计算百分比
+4. **XUDP 全链路版本**：`frps`、XUDP proxy 端 `frpc`、XUDP visitor 端 `frpc` 必须全部使用兼容的 `GBitCat/frp-xudp`，推荐统一为当前内置的 `v0.71.0-v2`；不能只在 Android 端替换，也不要与官方 FRP 或其他 fork 混用
+5. **后台驻留**：为保证长时间稳定连接，请允许通知权限、取消电池优化（应用内首次启动会引导跳转），部分国产 ROM 还需在系统设置中允许后台运行
+6. **内存显示**：卡片显示的是 App 与 frpc 进程的 RSS 占用，按设备总内存计算百分比
 
 ## 🤝 贡献
 
@@ -173,6 +181,7 @@ secretKey = "your_secret_key"
 
 - [FRP 官方文档](https://github.com/fatedier/frp)
 - [FRP Releases](https://github.com/fatedier/frp/releases)
+- [GBitCat/frp-xudp](https://github.com/GBitCat/frp-xudp)
 - [Android 开发者文档](https://developer.android.com/)
 
 ## 🙏 致谢
