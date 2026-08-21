@@ -9,12 +9,14 @@ import '../models/server_config.dart';
 /// 导出数据：Server 配置 + 应用配置列表（与原有 ExportData 格式一致）
 class ExportData {
   final int version;
+  final bool redacted;
   final List<ServerConfig> servers;
   final String selectedServerId;
   final List<FrpConfig> configs;
 
   const ExportData({
-    this.version = 2,
+    this.version = 3,
+    this.redacted = false,
     this.servers = const [],
     this.selectedServerId = '',
     this.configs = const [],
@@ -25,6 +27,7 @@ class ExportData {
 
   Map<String, dynamic> toJson() => {
     'version': version,
+    'redacted': redacted,
     'servers': servers.map((e) => e.toJson()).toList(),
     'selectedServerId': selectedServerId,
     'configs': configs.map((e) => e.toJson()).toList(),
@@ -43,6 +46,7 @@ class ExportData {
     final selected = j['selectedServerId'] as String? ?? '';
     return ExportData(
       version: (j['version'] as num?)?.toInt() ?? 1,
+      redacted: j['redacted'] as bool? ?? false,
       servers: serverList,
       selectedServerId: serverList.any((e) => e.serverId == selected)
           ? selected
@@ -56,31 +60,65 @@ class ExportData {
 
 /// 导入导出：zip（frp_configs.json + frpc_all.toml）/ 纯 JSON，兼容旧格式
 class ConfigImportExport {
+  static const maxImportBytes = 5 * 1024 * 1024;
+  static const maxJsonBytes = 2 * 1024 * 1024;
+  static const maxArchiveEntries = 64;
+
   /// 构建导出 zip
   static Uint8List buildExportZip(
     List<FrpConfig> configs,
     List<ServerConfig> servers,
     String selectedServerId,
-    Map<String, String> serverTomls,
-  ) {
+    Map<String, String> serverTomls, {
+    bool includeSecrets = false,
+  }) {
+    final exportedConfigs = includeSecrets
+        ? configs
+        : configs
+              .map(
+                (config) => config.copyWith(
+                  token: null,
+                  secretKey: null,
+                  stcpSecretKey: '',
+                  manualToml: config.manualToml == null
+                      ? null
+                      : '# Redacted export: manual TOML omitted. Re-enter it on this device.',
+                ),
+              )
+              .toList();
+    final exportedServers = includeSecrets
+        ? servers
+        : servers.map((server) => server.copyWith(token: '')).toList();
     final jsonBytes = utf8.encode(
       jsonEncode(
         ExportData(
-          configs: configs,
-          servers: servers,
+          configs: exportedConfigs,
+          servers: exportedServers,
           selectedServerId: selectedServerId,
+          redacted: !includeSecrets,
         ).toJson(),
       ),
     );
     final archive = Archive()
       ..addFile(ArchiveFile('frp_configs.json', jsonBytes.length, jsonBytes));
-    for (var i = 0; i < servers.length; i++) {
-      final server = servers[i];
-      final safeId = server.serverId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-      final name = safeId.isEmpty ? 'server_${i + 1}' : safeId;
-      final tomlBytes = utf8.encode(serverTomls[server.serverId] ?? '');
+    if (includeSecrets) {
+      for (var i = 0; i < servers.length; i++) {
+        final server = servers[i];
+        final safeId = server.serverId.replaceAll(
+          RegExp(r'[^A-Za-z0-9_-]'),
+          '_',
+        );
+        final name = safeId.isEmpty ? 'server_${i + 1}' : safeId;
+        final tomlBytes = utf8.encode(serverTomls[server.serverId] ?? '');
+        archive.addFile(
+          ArchiveFile('servers/$name.toml', tomlBytes.length, tomlBytes),
+        );
+      }
+    } else {
+      const notice =
+          'Secrets and manual TOML were intentionally omitted. Re-enter credentials after import.\n';
       archive.addFile(
-        ArchiveFile('servers/$name.toml', tomlBytes.length, tomlBytes),
+        ArchiveFile('REDACTED.txt', notice.length, utf8.encode(notice)),
       );
     }
     return Uint8List.fromList(ZipEncoder().encode(archive));
@@ -89,20 +127,25 @@ class ConfigImportExport {
   /// 解析导入内容：zip（取其中 .json）或纯 JSON 文本
   static ExportData? parseImportBytes(Uint8List bytes) {
     try {
+      if (bytes.isEmpty || bytes.length > maxImportBytes) return null;
       // ZIP 魔数 PK
       if (bytes.length > 4 && bytes[0] == 0x50 && bytes[1] == 0x4B) {
         final archive = ZipDecoder().decodeBytes(bytes);
+        if (archive.files.length > maxArchiveEntries) return null;
         for (final f in archive.files) {
           if (f.name.endsWith('.json')) {
+            if (f.size > maxJsonBytes) return null;
             final content = f.content;
             final json = content is String
                 ? content as String
                 : utf8.decode(content as List<int>);
+            if (utf8.encode(json).length > maxJsonBytes) return null;
             return parseJson(json);
           }
         }
         return null;
       }
+      if (bytes.length > maxJsonBytes) return null;
       return parseJson(utf8.decode(bytes));
     } catch (_) {
       return null;

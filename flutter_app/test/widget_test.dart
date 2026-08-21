@@ -4,6 +4,7 @@ import 'package:frp_app/models/frp_config.dart';
 import 'package:frp_app/models/server_config.dart';
 import 'package:frp_app/services/config_import_export.dart';
 import 'package:archive/archive.dart';
+import 'dart:typed_data';
 
 void main() {
   test('export zip -> import round trip', () {
@@ -25,6 +26,7 @@ void main() {
       [server],
       server.serverId,
       {server.serverId: 'serverAddr = "1.2.3.4"'},
+      includeSecrets: true,
     );
     final data = ConfigImportExport.parseImportBytes(zip);
     expect(data, isNotNull);
@@ -46,9 +48,10 @@ void main() {
         first.serverId: 'serverAddr = "1.1.1.1"',
         second.serverId: 'serverAddr = "2.2.2.2"',
       },
+      includeSecrets: true,
     );
     final data = ConfigImportExport.parseImportBytes(zip)!;
-    expect(data.version, 2);
+    expect(data.version, 3);
     expect(data.servers.map((e) => e.serverId), ['SERVER01', 'SERVER02']);
     expect(data.selectedServerId, 'SERVER02');
   });
@@ -65,7 +68,7 @@ void main() {
   test('legacy config array remains importable', () {
     const json = '[{"name":"legacy","protocol":"tcp","localPort":22}]';
     final data = ConfigImportExport.parseJson(json)!;
-    expect(data.version, 2);
+    expect(data.version, 3);
     expect(data.configs.single.name, 'legacy');
   });
 
@@ -77,12 +80,42 @@ void main() {
       [first, second],
       first.serverId,
       const {'SERVER01': 'one', 'SERVER02': 'two'},
+      includeSecrets: true,
     );
     final names = ZipDecoder().decodeBytes(bytes).files.map((e) => e.name);
     expect(
       names,
       containsAll(['servers/SERVER01.toml', 'servers/SERVER02.toml']),
     );
+  });
+
+  test('redacted export is the default and omits every secret source', () {
+    const config = FrpConfig(
+      name: 'manual',
+      protocol: 'xudp',
+      secretKey: 'proxy-secret',
+      stcpSecretKey: 'fallback-secret',
+      manualToml: '[[proxies]]\nsecretKey = "manual-secret"',
+    );
+    const server = ServerConfig(serverId: 'SERVER01', token: 'server-secret');
+    final bytes = ConfigImportExport.buildExportZip(
+      [config],
+      [server],
+      server.serverId,
+      const {'SERVER01': 'auth.token = "toml-secret"'},
+    );
+    final archive = ZipDecoder().decodeBytes(bytes);
+    expect(archive.files.map((file) => file.name), contains('REDACTED.txt'));
+    expect(
+      archive.files.map((file) => file.name),
+      isNot(contains('servers/SERVER01.toml')),
+    );
+    final data = ConfigImportExport.parseImportBytes(bytes)!;
+    expect(data.redacted, isTrue);
+    expect(data.servers.single.token, isEmpty);
+    expect(data.configs.single.secretKey, isNull);
+    expect(data.configs.single.stcpSecretKey, isEmpty);
+    expect(data.configs.single.manualToml, isNot(contains('manual-secret')));
   });
 
   test('frp config json round trip', () {
@@ -98,5 +131,19 @@ void main() {
     expect(c2.name, c.name);
     expect(c2.protocol, 'xtcp');
     expect(c2.secretKey, 'sk');
+  });
+
+  test('oversized imports are rejected before parsing', () {
+    final bytes = Uint8List(ConfigImportExport.maxImportBytes + 1);
+    expect(ConfigImportExport.parseImportBytes(bytes), isNull);
+  });
+
+  test('archives with too many entries are rejected', () {
+    final archive = Archive();
+    for (var i = 0; i <= ConfigImportExport.maxArchiveEntries; i++) {
+      archive.addFile(ArchiveFile('entry-$i.txt', 1, const [0]));
+    }
+    final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
+    expect(ConfigImportExport.parseImportBytes(bytes), isNull);
   });
 }

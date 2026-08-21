@@ -116,6 +116,3 @@ screenshot*.png
 *.pem
 *.crt
 *.hprof
-
-# 冗余本地二进制（frpc 已通过 jniLibs 打包）
-app/src/main/assets/frpc

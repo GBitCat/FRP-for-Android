@@ -73,12 +73,12 @@ class FrpEngine {
     _ => ConnectionType.unknown,
   };
 
-  /// 启动 frpc，configPath 为 TOML 文件绝对路径
-  Future<bool> start(String configPath) async {
+  /// 启动 frpc。TOML 只在原生服务内短暂落盘，避免 Dart 层留下明文文件。
+  Future<bool> start(String configContent) async {
     try {
       final ok =
           await _channel.invokeMethod<bool>('start', {
-            'configPath': configPath,
+            'configContent': configContent,
           }) ??
           false;
       return ok;

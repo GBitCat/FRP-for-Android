@@ -1,24 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-# 部署脚本
-echo "Deploying FRP Android app..."
-
-# 检查是否连接了Android设备
-if ! adb devices | grep -q "device$"; then
-    echo "Error: No Android device connected"
-    exit 1
-fi
-
-# 构建APK
-echo "Building APK..."
-./gradlew assembleDebug
-
-# 安装APK
-echo "Installing APK..."
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-# 启动应用
-echo "Starting app..."
-adb shell am start -n com.frp.app/.MainActivity
-
-echo "Deployment completed!"
+readonly adb_target="${ADB_TARGET:-10.0.0.1:16512}"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"$repo_dir/scripts/build.sh"
+adb connect "$adb_target"
+adb -s "$adb_target" install -r \
+  "$repo_dir/flutter_app/build/app/outputs/flutter-apk/app-debug.apk"
+adb -s "$adb_target" shell am start -n \
+  com.frp.frp_app.debug/com.frp.frp_app.MainActivity

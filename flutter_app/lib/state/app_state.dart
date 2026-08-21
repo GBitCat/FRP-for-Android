@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
-import 'package:path_provider/path_provider.dart';
 
 import '../models/connection_status.dart';
 import '../models/frp_config.dart';
@@ -53,8 +52,14 @@ class AppState extends ChangeNotifier {
   String ipv6 = '';
   Timer? _pollTimer;
   bool _pollInProgress = false;
+  bool _pollingEnabled = true;
   bool _disposed = false;
+  bool initialized = false;
+  String? initializationError;
+  late Future<void> _initialization;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
+
+  Future<void> get ready => _initialization;
 
   AppState() {
     _subscriptions.add(
@@ -76,11 +81,30 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }),
     );
-    _load();
+    _initialization = _load();
     _startPolling();
   }
 
   Future<void> _load() async {
+    try {
+      await _loadData();
+      initializationError = null;
+    } catch (error, stackTrace) {
+      initializationError = 'Unable to decrypt or load saved configuration';
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'frp_app configuration initialization',
+        ),
+      );
+    } finally {
+      initialized = true;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadData() async {
     _resolveStun();
     hideFromRecents = await _store.loadHideFromRecents();
     if (hideFromRecents) {
@@ -119,9 +143,37 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> retryInitialization() async {
+    initialized = false;
+    initializationError = null;
+    notifyListeners();
+    _initialization = _load();
+    await _initialization;
+  }
+
+  Future<void> _ensureInitialized() async {
+    await _initialization;
+    if (initializationError != null) {
+      throw StateError(initializationError!);
+    }
+  }
+
   void _startPolling() {
+    if (_disposed || !_pollingEnabled) return;
     _pollTimer?.cancel();
     _pollTimer = Timer(Duration.zero, _poll);
+  }
+
+  void pausePolling() {
+    _pollingEnabled = false;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
+  void resumePolling() {
+    if (_disposed || _pollingEnabled) return;
+    _pollingEnabled = true;
+    _startPolling();
   }
 
   Future<void> _poll() async {
@@ -137,13 +189,14 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     } finally {
       _pollInProgress = false;
-      if (!_disposed) {
+      if (!_disposed && _pollingEnabled) {
         _pollTimer = Timer(const Duration(seconds: 2), _poll);
       }
     }
   }
 
   Future<void> start() async {
+    await _ensureInitialized();
     running = true;
     serverStatus = const ConnectionStatus(
       ConnectionType.unknown,
@@ -151,12 +204,7 @@ class AppState extends ChangeNotifier {
     );
     notifyListeners();
     try {
-      final dir = await getApplicationSupportDirectory();
-      final file = File('${dir.path}/frpc_${selectedServer.serverId}.toml');
-      final pending = File('${file.path}.pending');
-      await pending.writeAsString(buildFullToml(), flush: true);
-      await pending.rename(file.path);
-      final ok = await engine.start(file.path);
+      final ok = await engine.start(buildFullToml());
       if (!ok) {
         running = false;
         serverStatus = const ConnectionStatus(
@@ -201,6 +249,7 @@ class AppState extends ChangeNotifier {
 
   /// 保存主题设置（模式 + 主色）
   Future<void> setTheme(ThemeSettings t) async {
+    await _ensureInitialized();
     theme = t;
     await _store.saveThemeMode(t.mode);
     await _store.saveThemeAccent(t.accentIndex);
@@ -209,6 +258,7 @@ class AppState extends ChangeNotifier {
 
   /// 隐藏/恢复最近任务卡片（设置页开关）
   Future<void> setHideFromRecents(bool v) async {
+    await _ensureInitialized();
     hideFromRecents = v;
     await _store.saveHideFromRecents(v);
     await engine.setExcludeFromRecents(v);
@@ -216,6 +266,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> selectServer(String id) async {
+    await _ensureInitialized();
     if (id == _selectedServerId || !servers.any((e) => e.serverId == id)) {
       return;
     }
@@ -228,6 +279,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteServer(String id) async {
+    await _ensureInitialized();
     if (id == _selectedServerId && running) await stop();
     servers.removeWhere((e) => e.serverId == id);
     configs.removeWhere((e) => e.serverId == id);
@@ -275,6 +327,7 @@ class AppState extends ChangeNotifier {
 
   /// 应用导入结果：覆盖 server（如有）与 configs，返回导入数量
   Future<int> applyImport(ExportData? data) async {
+    await _ensureInitialized();
     if (data == null) return 0;
     if (running) await stop();
     if (data.servers.isNotEmpty) {
@@ -308,6 +361,7 @@ class AppState extends ChangeNotifier {
     ServerConfig s, {
     String? originalServerId,
   }) async {
+    await _ensureInitialized();
     final oldId = originalServerId ?? s.serverId;
     final i = servers.indexWhere((e) => e.serverId == oldId);
     final restart = running && oldId == _selectedServerId;
@@ -335,6 +389,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> addServerConfig(ServerConfig s) async {
+    await _ensureInitialized();
     servers.add(s);
     _selectedServerId = s.serverId;
     await _store.saveServers(servers);
@@ -343,6 +398,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> addConfig(FrpConfig config) async {
+    await _ensureInitialized();
     final maxId = configs.fold<int>(0, (m, e) => e.id > m ? e.id : m);
     final now = DateTime.now().millisecondsSinceEpoch;
     final c = config.copyWith(id: maxId + 1, createdAt: now, updatedAt: now);
@@ -352,6 +408,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> updateConfig(FrpConfig config) async {
+    await _ensureInitialized();
     final i = configs.indexWhere((e) => e.id == config.id);
     if (i < 0) return;
     configs[i] = config.copyWith(
@@ -362,12 +419,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteConfig(int id) async {
+    await _ensureInitialized();
     configs.removeWhere((e) => e.id == id);
     await _store.saveConfigs(configs);
     notifyListeners();
   }
 
   Future<void> setConfigEnabled(int id, bool enabled) async {
+    await _ensureInitialized();
     final i = configs.indexWhere((e) => e.id == id);
     if (i < 0) return;
     configs[i] = configs[i].copyWith(enabled: enabled);
@@ -376,6 +435,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> setGroupEnabled(int groupId, bool enabled) async {
+    await _ensureInitialized();
     configs = configs
         .map((e) => e.groupId == groupId ? e.copyWith(enabled: enabled) : e)
         .toList();
@@ -384,12 +444,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteGroup(int groupId) async {
+    await _ensureInitialized();
     configs.removeWhere((e) => e.groupId == groupId);
     await _store.saveConfigs(configs);
     notifyListeners();
   }
 
   Future<void> renameGroup(int groupId, String name) async {
+    await _ensureInitialized();
     configs = configs
         .map((e) => e.groupId == groupId ? e.copyWith(groupName: name) : e)
         .toList();
@@ -398,6 +460,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> syncLinkedStcp(FrpConfig primary) async {
+    await _ensureInitialized();
     // 与原有 createLinkedStcpConfig 一致：更新同组 STCP 子配置字段
     if (!primary.useFallback || primary.fallbackTo.isEmpty) return;
     final stcp = configs
