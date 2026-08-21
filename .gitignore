@@ -113,6 +113,8 @@ screenshot*.png
 # 密钥 / 签名 / 证书
 *.keystore
 *.jks
+*.p12
 *.pem
 *.crt
 *.hprof
+.release-signing-backup/
