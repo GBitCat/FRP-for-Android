@@ -28,11 +28,12 @@ String configBlock(FrpConfig c) {
     b.writeln('bindPort = ${c.bindPort}');
     if (c.protocol == 'xtcp') {
       b.writeln('keepTunnelOpen = true');
-      if (c.useFallback && c.fallbackTo.isNotEmpty) {
-        b.writeln('fallbackTo = "${_tomlString(c.fallbackTo)}"');
-        b.writeln('fallbackTimeoutMs = ${c.fallbackTimeoutMs}');
-      }
     }
+    if (c.supportsFallback() && c.useFallback && c.fallbackTo.isNotEmpty) {
+      b.writeln('fallbackTo = "${_tomlString(c.fallbackTo)}"');
+      b.writeln('fallbackTimeoutMs = ${c.fallbackTimeoutMs}');
+    }
+    _writeTransport(b, c, 'visitors');
   } else if (c.needsSecretKey()) {
     b.writeln('[[proxies]]');
     b.writeln('name = "${_tomlString(c.name)}"');
@@ -42,25 +43,64 @@ String configBlock(FrpConfig c) {
     if ((c.secretKey ?? '').isNotEmpty) {
       b.writeln('secretKey = "${_tomlString(c.secretKey!)}"');
     }
+    _writeTransport(b, c, 'proxies');
+  } else if (c.supportsMultiplePorts()) {
+    final mappings = c.effectivePortMappings;
+    for (var i = 0; i < mappings.length; i++) {
+      if (i > 0) b.writeln();
+      final mapping = mappings[i];
+      _writeRegularProxy(
+        b,
+        c,
+        name: c.proxyNameForMapping(mapping),
+        localPort: mapping.localPort,
+        remotePort: mapping.remotePort,
+      );
+    }
   } else {
-    b.writeln('[[proxies]]');
-    b.writeln('name = "${_tomlString(c.name)}"');
-    b.writeln('type = "${c.protocol}"');
-    b.writeln('localIP = "${_tomlString(c.localIp)}"');
-    b.writeln('localPort = ${c.localPort}');
-    if (c.remotePort > 0) b.writeln('remotePort = ${c.remotePort}');
-  }
-  if (c.useEncryption || c.useCompression) {
-    b.writeln();
-    b.writeln(
-      c.isVisitor() && c.needsSecretKey()
-          ? '[visitors.transport]'
-          : '[proxies.transport]',
+    _writeRegularProxy(
+      b,
+      c,
+      name: c.name,
+      localPort: c.localPort,
+      remotePort: c.remotePort,
     );
-    b.writeln('useEncryption = ${c.useEncryption}');
-    b.writeln('useCompression = ${c.useCompression}');
   }
   return b.toString();
+}
+
+void _writeRegularProxy(
+  StringBuffer b,
+  FrpConfig config, {
+  required String name,
+  required int localPort,
+  required int remotePort,
+}) {
+  b.writeln('[[proxies]]');
+  b.writeln('name = "${_tomlString(name)}"');
+  b.writeln('type = "${config.protocol}"');
+  b.writeln('localIP = "${_tomlString(config.localIp)}"');
+  b.writeln('localPort = $localPort');
+  if (config.protocol.toLowerCase() == 'http' ||
+      config.protocol.toLowerCase() == 'https') {
+    final domains = config.customDomains
+        .map((domain) => domain.trim())
+        .where((domain) => domain.isNotEmpty)
+        .map((domain) => '"${_tomlString(domain)}"')
+        .join(', ');
+    if (domains.isNotEmpty) b.writeln('customDomains = [$domains]');
+  } else if (remotePort > 0) {
+    b.writeln('remotePort = $remotePort');
+  }
+  _writeTransport(b, config, 'proxies');
+}
+
+void _writeTransport(StringBuffer b, FrpConfig config, String table) {
+  if (!config.useEncryption && !config.useCompression) return;
+  b.writeln();
+  b.writeln('[$table.transport]');
+  b.writeln('useEncryption = ${config.useEncryption}');
+  b.writeln('useCompression = ${config.useCompression}');
 }
 
 /// 全局服务器连接配置段
@@ -93,10 +133,10 @@ String generateToml(
   final b = StringBuffer();
   b.write(globalBlock(server));
   if (linkedConfig != null) {
-    b.writeln('# Fallback STCP visitor');
+    b.writeln('# Fallback ${linkedConfig.protocol.toUpperCase()} visitor');
     b.write(configBlock(linkedConfig));
     b.writeln();
-    b.writeln('# Primary XTCP visitor');
+    b.writeln('# Primary ${config.protocol.toUpperCase()} visitor');
   }
   b.write(configBlock(config));
   return b.toString();

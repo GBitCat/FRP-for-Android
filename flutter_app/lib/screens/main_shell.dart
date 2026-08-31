@@ -5,6 +5,7 @@ import '../state/app_state.dart';
 import '../services/frp_engine.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/glass_bottom_nav.dart';
+import 'config_edit_screen.dart';
 import 'configs_screen.dart';
 import 'dashboard_screen.dart';
 import 'manual_config_edit_screen.dart';
@@ -137,11 +138,26 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
             const SizedBox(height: 4),
             const Divider(),
             _MenuOption(
+              icon: Icons.tune_outlined,
+              iconColor: Theme.of(context).colorScheme.secondaryContainer,
+              iconForeground: Theme.of(
+                context,
+              ).colorScheme.onSecondaryContainer,
+              title: 'Form Config',
+              subtitle: 'Create a configuration with guided fields',
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ConfigEditScreen()),
+                );
+              },
+            ),
+            _MenuOption(
               icon: Icons.edit_note_outlined,
               iconColor: Theme.of(context).colorScheme.tertiaryContainer,
               iconForeground: Theme.of(context).colorScheme.onTertiaryContainer,
               title: 'Manual Config',
-              subtitle: 'Create a new frpc configuration',
+              subtitle: 'Write proxy or visitor TOML directly',
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.of(context).push(
@@ -275,18 +291,22 @@ class _MenuOption extends StatelessWidget {
               child: Icon(icon, size: 18, color: iconForeground),
             ),
             const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: Theme.of(context).textTheme.bodyMedium),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.bodyMedium),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),

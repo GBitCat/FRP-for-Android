@@ -274,7 +274,9 @@ void _confirmDelete(BuildContext context, FrpConfig config) {
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: 8),
-          Text("Are you sure you want to delete '${config.name}'?"),
+          Text(
+            "Are you sure you want to delete '${ConfigDomainService.displayName(config)}'?",
+          ),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
@@ -459,10 +461,17 @@ class _ConfigGroupItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final protocols = group.members
-        .map((e) => e.protocol.toUpperCase())
-        .toSet();
-    final protocolText = protocols.join(' + ');
+    final protocolCounts = <String, int>{};
+    for (final member in group.members) {
+      final protocol = member.protocol.toUpperCase();
+      protocolCounts[protocol] = (protocolCounts[protocol] ?? 0) + 1;
+    }
+    final protocolText = protocolCounts.entries
+        .map(
+          (entry) =>
+              entry.value > 1 ? '${entry.key} ×${entry.value}' : entry.key,
+        )
+        .join(' + ');
     return AppCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
@@ -533,6 +542,9 @@ class _ConfigItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final secret = config.needsSecretKey();
+    final portSummary = config.isMultiPort
+        ? ' · ${config.effectivePortMappings.length} ports'
+        : '';
     return AppCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
@@ -558,14 +570,14 @@ class _ConfigItem extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  config.name,
+                  ConfigDomainService.displayName(config),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${config.manualTypes.isEmpty ? config.protocol.toUpperCase() : config.manualTypes.join(' + ').toUpperCase()} · ${config.isVisitor() ? "Visitor" : "Server"}',
+                  '${config.manualTypes.isEmpty ? config.protocol.toUpperCase() : config.manualTypes.join(' + ').toUpperCase()}$portSummary · ${config.isVisitor() ? "Visitor" : "Server"}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                   ),

@@ -31,6 +31,11 @@ class ConfigGroup {
 class ConfigDomainService {
   const ConfigDomainService._();
 
+  static String displayName(FrpConfig config) {
+    final groupName = config.groupName.trim();
+    return groupName.isEmpty ? config.name : groupName;
+  }
+
   static String effectiveName(
     String value, {
     required String protocol,
@@ -43,27 +48,89 @@ class ConfigDomainService {
     return name;
   }
 
-  static FrpConfig createLinkedStcpConfig(FrpConfig xtcp) {
-    final base = xtcp.name.endsWith('-xtcp')
-        ? xtcp.name.substring(0, xtcp.name.length - 5)
-        : xtcp.name;
+  static String? fallbackProtocolFor(String protocol) {
+    return switch (protocol.toLowerCase()) {
+      'xtcp' => 'stcp',
+      'xudp' => 'sudp',
+      _ => null,
+    };
+  }
+
+  static String fallbackNameFor(String name, {required String protocol}) {
+    final primaryProtocol = protocol.toLowerCase();
+    final fallbackProtocol = fallbackProtocolFor(primaryProtocol) ?? 'stcp';
+    final suffix = '-$primaryProtocol';
+    final base = name.toLowerCase().endsWith(suffix)
+        ? name.substring(0, name.length - suffix.length)
+        : name;
+    return '$base-$fallbackProtocol';
+  }
+
+  static String fallbackServerNameFor(
+    String serverName, {
+    required String protocol,
+    required String fallbackProtocol,
+  }) {
+    if (serverName.isEmpty) return '';
+    final pattern = RegExp(RegExp.escape(protocol), caseSensitive: false);
+    if (pattern.hasMatch(serverName)) {
+      return serverName.replaceAll(pattern, fallbackProtocol);
+    }
+    return '$serverName-$fallbackProtocol';
+  }
+
+  static int defaultFallbackBindPortFor(FrpConfig primary) {
+    if (fallbackProtocolFor(primary.protocol) != 'sudp') return -1;
+    if (primary.bindPort > 0 && primary.bindPort < 65535) {
+      return primary.bindPort + 1;
+    }
+    if (primary.bindPort == 65535) return 65534;
+    return 9003;
+  }
+
+  static FrpConfig createLinkedFallbackConfig(FrpConfig primary) {
+    final fallbackProtocol = fallbackProtocolFor(primary.protocol);
+    if (fallbackProtocol == null) {
+      throw ArgumentError.value(
+        primary.protocol,
+        'primary.protocol',
+        'Only XTCP and XUDP support linked fallback visitors',
+      );
+    }
+    final fallbackName = primary.stcpName.isNotEmpty
+        ? primary.stcpName
+        : fallbackNameFor(primary.name, protocol: primary.protocol);
     return FrpConfig(
-      name: '$base-stcp',
-      localIp: xtcp.localIp,
-      localPort: xtcp.localPort,
-      protocol: 'stcp',
+      name: fallbackName,
+      localIp: primary.localIp,
+      localPort: primary.localPort,
+      protocol: fallbackProtocol,
       role: 'visitor',
-      secretKey: xtcp.secretKey,
-      serverName: xtcp.stcpServerName.isNotEmpty
-          ? xtcp.stcpServerName
-          : (xtcp.serverName ?? '').replaceAll('xtcp', 'stcp'),
-      bindPort: -1,
-      bindAddr: '',
-      useEncryption: xtcp.useEncryption,
-      useCompression: xtcp.useCompression,
-      serverId: xtcp.serverId,
+      secretKey: primary.stcpSecretKey.isNotEmpty
+          ? primary.stcpSecretKey
+          : primary.secretKey,
+      serverName: primary.stcpServerName.isNotEmpty
+          ? primary.stcpServerName
+          : fallbackServerNameFor(
+              primary.serverName ?? '',
+              protocol: primary.protocol,
+              fallbackProtocol: fallbackProtocol,
+            ),
+      bindPort: primary.useCustomStcp
+          ? primary.stcpBindPort
+          : defaultFallbackBindPortFor(primary),
+      bindAddr: primary.useCustomStcp
+          ? primary.stcpBindAddr
+          : (fallbackProtocol == 'sudp' ? primary.bindAddr : ''),
+      useEncryption: primary.useEncryption,
+      useCompression: primary.useCompression,
+      enabled: primary.enabled,
+      serverId: primary.serverId,
     );
   }
+
+  static FrpConfig createLinkedStcpConfig(FrpConfig xtcp) =>
+      createLinkedFallbackConfig(xtcp);
 
   static ConnectionType aggregateStatuses(Iterable<ConnectionType> statuses) {
     if (statuses.contains(ConnectionType.error)) return ConnectionType.error;
@@ -76,6 +143,29 @@ class ConfigDomainService {
       return ConnectionType.connecting;
     }
     return ConnectionType.unknown;
+  }
+
+  /// Returns the first emitted proxy-name collision introduced by a
+  /// multi-port configuration. Existing single-port duplicate behavior is
+  /// left unchanged for backwards compatibility.
+  static String? findMultiPortNameCollision(
+    FrpConfig candidate,
+    Iterable<FrpConfig> configs,
+  ) {
+    final candidateNames = candidate.configuredNames.toSet();
+    for (final existing in configs) {
+      if ((!candidate.isMultiPort && !existing.isMultiPort) ||
+          existing.id == candidate.id ||
+          (existing.serverId.isNotEmpty &&
+              existing.serverId != candidate.serverId)) {
+        continue;
+      }
+      final collisions = candidateNames.intersection(
+        existing.configuredNames.toSet(),
+      );
+      if (collisions.isNotEmpty) return collisions.first;
+    }
+    return null;
   }
 
   static List<AppRow> buildAppRows(
@@ -91,22 +181,24 @@ class ConfigDomainService {
         orElse: () => members.first,
       );
       final status = aggregateStatuses(
-        members.map((e) => appStatuses[e.name]).whereType<ConnectionType>(),
+        members
+            .expand((config) => config.runtimeNames)
+            .map((name) => appStatuses[name])
+            .whereType<ConnectionType>(),
       );
       rows.add(
-        AppRow(
-          primary.groupName.isNotEmpty ? primary.groupName : primary.name,
-          ConnectionStatus(status).label,
-          status,
-        ),
+        AppRow(displayName(primary), ConnectionStatus(status).label, status),
       );
     }
     for (final config in configs.where((e) => !e.isInGroup())) {
-      final names = <String>{config.name, ...config.manualNames};
       final status = aggregateStatuses(
-        names.map((name) => appStatuses[name]).whereType<ConnectionType>(),
+        config.runtimeNames
+            .map((name) => appStatuses[name])
+            .whereType<ConnectionType>(),
       );
-      rows.add(AppRow(config.name, ConnectionStatus(status).label, status));
+      rows.add(
+        AppRow(displayName(config), ConnectionStatus(status).label, status),
+      );
     }
     return rows;
   }
@@ -124,9 +216,7 @@ class ConfigDomainService {
       result.add(
         ConfigGroup(
           groupId: id,
-          groupName: primary.groupName.isNotEmpty
-              ? primary.groupName
-              : primary.name,
+          groupName: displayName(primary),
           primary: primary,
           members: members,
           enabled: members.every((e) => e.enabled),
@@ -139,7 +229,7 @@ class ConfigDomainService {
           .map(
             (config) => ConfigGroup(
               groupId: 0,
-              groupName: config.name,
+              groupName: displayName(config),
               primary: config,
               members: const [],
               enabled: config.enabled,

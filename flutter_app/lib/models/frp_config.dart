@@ -1,3 +1,29 @@
+class PortMapping {
+  final int localPort;
+  final int remotePort;
+
+  const PortMapping({required this.localPort, required this.remotePort});
+
+  Map<String, dynamic> toJson() => {
+    'localPort': localPort,
+    'remotePort': remotePort,
+  };
+
+  factory PortMapping.fromJson(Map<String, dynamic> json) => PortMapping(
+    localPort: (json['localPort'] as num?)?.toInt() ?? 0,
+    remotePort: (json['remotePort'] as num?)?.toInt() ?? 0,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is PortMapping &&
+      other.localPort == localPort &&
+      other.remotePort == remotePort;
+
+  @override
+  int get hashCode => Object.hash(localPort, remotePort);
+}
+
 class FrpConfig {
   final int id;
   final String name;
@@ -10,7 +36,11 @@ class FrpConfig {
   final String localIp;
   final int localPort;
   final int remotePort;
+  final List<PortMapping> portMappings;
   final String protocol;
+
+  // HTTP/HTTPS 特有
+  final List<String> customDomains;
 
   // STCP/XTCP 特有
   final String role; // visitor / server
@@ -23,13 +53,13 @@ class FrpConfig {
   final bool useEncryption;
   final bool useCompression;
 
-  // XTCP 回落
+  // XTCP/XUDP 回落
   final bool useFallback;
   final String fallbackTo;
   final int fallbackTimeoutMs;
   final bool useCustomStcp;
 
-  // STCP Fallback 自定义配置
+  // Fallback 自定义配置（字段名保留 STCP 以兼容已有备份）
   final String stcpName;
   final String stcpSecretKey;
   final String stcpServerName;
@@ -61,7 +91,9 @@ class FrpConfig {
     this.localIp = '127.0.0.1',
     this.localPort = 0,
     this.remotePort = 0,
+    this.portMappings = const [],
     this.protocol = 'tcp',
+    this.customDomains = const [],
     this.role = 'visitor',
     this.secretKey,
     this.serverName,
@@ -101,11 +133,51 @@ class FrpConfig {
     'xudp',
   ];
   static const List<String> secretProtocols = ['stcp', 'sudp', 'xtcp', 'xudp'];
+  static const int maxPortMappings = 128;
 
   bool needsSecretKey() => secretProtocols.contains(protocol.toLowerCase());
   bool isVisitor() => role == 'visitor';
-  bool supportsFallback() => protocol.toLowerCase() == 'xtcp';
+  bool supportsFallback() {
+    final type = protocol.toLowerCase();
+    return type == 'xtcp' || type == 'xudp';
+  }
+
   bool isInGroup() => groupId > 0;
+  bool supportsMultiplePorts() {
+    final type = protocol.toLowerCase();
+    return type == 'tcp' || type == 'udp';
+  }
+
+  /// Complete mappings used by TCP/UDP. Legacy records without the new list
+  /// transparently expose their original scalar port pair.
+  List<PortMapping> get effectivePortMappings {
+    if (supportsMultiplePorts() && portMappings.isNotEmpty) {
+      return portMappings;
+    }
+    return [PortMapping(localPort: localPort, remotePort: remotePort)];
+  }
+
+  bool get isMultiPort =>
+      supportsMultiplePorts() && effectivePortMappings.length > 1;
+
+  String proxyNameForMapping(PortMapping mapping) =>
+      isMultiPort ? '$name-${mapping.localPort}' : name;
+
+  List<String> get generatedProxyNames => [
+    for (final mapping in effectivePortMappings) proxyNameForMapping(mapping),
+  ];
+
+  List<String> get configuredNames {
+    if (manualToml != null) {
+      return manualNames.isEmpty ? [name] : manualNames;
+    }
+    return generatedProxyNames;
+  }
+
+  List<String> get runtimeNames => <String>{
+    name,
+    ...configuredNames,
+  }.where((value) => value.isNotEmpty).toList();
 
   /// 手动配置：识别所有未被注释的 name = "..."（frpc 日志中的 visitor 名）
   List<String> get manualNames {
@@ -148,7 +220,9 @@ class FrpConfig {
     String? localIp,
     int? localPort,
     int? remotePort,
+    List<PortMapping>? portMappings,
     String? protocol,
+    List<String>? customDomains,
     String? role,
     Object? secretKey = _unset,
     Object? serverName = _unset,
@@ -185,7 +259,9 @@ class FrpConfig {
       localIp: localIp ?? this.localIp,
       localPort: localPort ?? this.localPort,
       remotePort: remotePort ?? this.remotePort,
+      portMappings: portMappings ?? this.portMappings,
       protocol: protocol ?? this.protocol,
+      customDomains: customDomains ?? this.customDomains,
       role: role ?? this.role,
       secretKey: identical(secretKey, _unset)
           ? this.secretKey
@@ -230,7 +306,9 @@ class FrpConfig {
     'localIp': localIp,
     'localPort': localPort,
     'remotePort': remotePort,
+    'portMappings': portMappings.map((mapping) => mapping.toJson()).toList(),
     'protocol': protocol,
+    'customDomains': customDomains,
     'role': role,
     'secretKey': secretKey,
     'serverName': serverName,
@@ -268,7 +346,11 @@ class FrpConfig {
     localIp: j['localIp'] as String? ?? '127.0.0.1',
     localPort: (j['localPort'] as num?)?.toInt() ?? 0,
     remotePort: (j['remotePort'] as num?)?.toInt() ?? 0,
+    portMappings: _portMappingsFromJson(j['portMappings']),
     protocol: j['protocol'] as String? ?? 'tcp',
+    customDomains:
+        (j['customDomains'] as List<dynamic>?)?.whereType<String>().toList() ??
+        const [],
     role: j['role'] as String? ?? 'visitor',
     secretKey: j['secretKey'] as String?,
     serverName: j['serverName'] as String?,
@@ -296,4 +378,12 @@ class FrpConfig {
     createdAt: (j['createdAt'] as num?)?.toInt() ?? 0,
     updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
   );
+
+  static List<PortMapping> _portMappingsFromJson(Object? value) {
+    if (value is! List<dynamic>) return const [];
+    return value
+        .whereType<Map>()
+        .map((mapping) => PortMapping.fromJson(mapping.cast<String, dynamic>()))
+        .toList();
+  }
 }

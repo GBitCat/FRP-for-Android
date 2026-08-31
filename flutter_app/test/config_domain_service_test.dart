@@ -55,6 +55,81 @@ void main() {
     expect(rows.last.status, ConnectionType.error);
   });
 
+  test('multi-port proxy names aggregate into one application row', () {
+    const config = FrpConfig(
+      name: 'services',
+      protocol: 'udp',
+      localPort: 5000,
+      remotePort: 15000,
+      portMappings: [
+        PortMapping(localPort: 5000, remotePort: 15000),
+        PortMapping(localPort: 5001, remotePort: 15001),
+      ],
+    );
+
+    expect(config.configuredNames, ['services-5000', 'services-5001']);
+    expect(config.runtimeNames, ['services', 'services-5000', 'services-5001']);
+    final rows = ConfigDomainService.buildAppRows(
+      const [config],
+      const {'services-5001': ConnectionType.error},
+    );
+    expect(rows.single.name, 'services');
+    expect(rows.single.status, ConnectionType.error);
+  });
+
+  test('single configs use their group name as the application name', () {
+    const config = FrpConfig(
+      name: 'ssh-xtcp',
+      groupName: 'Office SSH',
+      protocol: 'xtcp',
+    );
+
+    final rows = ConfigDomainService.buildAppRows(const [config], const {});
+    final groups = ConfigDomainService.buildGroups(const [config]);
+
+    expect(rows.single.name, 'Office SSH');
+    expect(groups.single.groupName, 'Office SSH');
+    expect(groups.single.isGroup, isFalse);
+  });
+
+  test('multi-port generated names detect same-server collisions', () {
+    const candidate = FrpConfig(
+      name: 'services',
+      protocol: 'tcp',
+      portMappings: [
+        PortMapping(localPort: 22, remotePort: 10022),
+        PortMapping(localPort: 80, remotePort: 10080),
+      ],
+      serverId: 'SERVER01',
+    );
+    expect(
+      ConfigDomainService.findMultiPortNameCollision(candidate, const [
+        FrpConfig(
+          id: 7,
+          name: 'services-80',
+          protocol: 'tcp',
+          localPort: 8080,
+          remotePort: 18080,
+          serverId: 'SERVER01',
+        ),
+      ]),
+      'services-80',
+    );
+    expect(
+      ConfigDomainService.findMultiPortNameCollision(candidate, const [
+        FrpConfig(
+          id: 8,
+          name: 'services-80',
+          protocol: 'tcp',
+          localPort: 8080,
+          remotePort: 18080,
+          serverId: 'SERVER02',
+        ),
+      ]),
+      isNull,
+    );
+  });
+
   test('validator and linked STCP derivation are deterministic', () {
     const xtcp = FrpConfig(
       name: 'ssh-xtcp',
@@ -70,6 +145,36 @@ void main() {
     expect(stcp.name, 'ssh-stcp');
     expect(stcp.serverName, 'ssh-stcp');
     expect(stcp.serverId, 'SERVER01');
+  });
+
+  test('linked XUDP fallback derives an independent SUDP visitor', () {
+    const xudp = FrpConfig(
+      name: 'game-xudp',
+      protocol: 'xudp',
+      role: 'visitor',
+      serverName: 'remote-xudp',
+      secretKey: 'udp-secret',
+      bindPort: 2000,
+      serverId: 'SERVER01',
+    );
+
+    final sudp = ConfigDomainService.createLinkedFallbackConfig(xudp);
+    expect(xudp.supportsFallback(), isTrue);
+    expect(sudp.name, 'game-sudp');
+    expect(sudp.protocol, 'sudp');
+    expect(sudp.serverName, 'remote-sudp');
+    expect(sudp.secretKey, 'udp-secret');
+    expect(sudp.bindPort, 2001);
+    expect(sudp.bindAddr, '127.0.0.1');
+    expect(sudp.serverId, 'SERVER01');
+    expect(
+      ConfigDomainService.fallbackServerNameFor(
+        'remote',
+        protocol: 'xudp',
+        fallbackProtocol: 'sudp',
+      ),
+      'remote-sudp',
+    );
   });
 
   test('effective XTCP naming is idempotent', () {
@@ -116,6 +221,68 @@ void main() {
         ),
       ),
       isNull,
+    );
+    expect(
+      ConfigValidator.validate(
+        const FrpConfig(
+          name: 'relay-client',
+          protocol: 'sudp',
+          role: 'visitor',
+          serverName: 'relay-server',
+          bindPort: -1,
+          secretKey: 'secret',
+        ),
+      ),
+      'Bind port must be between 1 and 65535 for SUDP',
+    );
+  });
+
+  test('HTTP form configs require a custom domain instead of remote port', () {
+    expect(
+      ConfigValidator.validate(
+        const FrpConfig(
+          name: 'web',
+          protocol: 'http',
+          localPort: 8080,
+          customDomains: ['web.example.com'],
+        ),
+      ),
+      isNull,
+    );
+    expect(
+      ConfigValidator.validate(
+        const FrpConfig(name: 'web', protocol: 'https', localPort: 8443),
+      ),
+      'At least one custom domain is required',
+    );
+  });
+
+  test('TCP and UDP multi-port mappings are validated as a unit', () {
+    expect(
+      ConfigValidator.validate(
+        const FrpConfig(
+          name: 'services',
+          protocol: 'tcp',
+          portMappings: [
+            PortMapping(localPort: 22, remotePort: 10022),
+            PortMapping(localPort: 80, remotePort: 10080),
+          ],
+        ),
+      ),
+      isNull,
+    );
+    expect(
+      ConfigValidator.validate(
+        const FrpConfig(
+          name: 'services',
+          protocol: 'udp',
+          portMappings: [
+            PortMapping(localPort: 53, remotePort: 10053),
+            PortMapping(localPort: 54, remotePort: 10053),
+          ],
+        ),
+      ),
+      'Remote ports must not contain duplicates',
     );
   });
 }

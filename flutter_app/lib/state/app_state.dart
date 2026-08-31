@@ -418,6 +418,57 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Atomically replaces a logical set of form configurations.
+  ///
+  /// Existing IDs retain their creation timestamps, while newly-added
+  /// protocol members receive fresh IDs. This lets the form editor update an
+  /// entire multi-protocol group without exposing a partially-written group
+  /// between individual add/update operations.
+  Future<void> replaceConfigSet({
+    required Set<int> existingIds,
+    required List<FrpConfig> replacements,
+  }) async {
+    await _ensureInitialized();
+
+    final existingById = {
+      for (final config in configs)
+        if (existingIds.contains(config.id)) config.id: config,
+    };
+    var nextId = configs.fold<int>(0, (max, config) {
+      return config.id > max ? config.id : max;
+    });
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final prepared = <FrpConfig>[];
+    final usedIds = <int>{};
+
+    for (final replacement in replacements) {
+      final existing = existingById[replacement.id];
+      if (existing != null && usedIds.add(existing.id)) {
+        prepared.add(
+          replacement.copyWith(createdAt: existing.createdAt, updatedAt: now),
+        );
+      } else {
+        nextId += 1;
+        usedIds.add(nextId);
+        prepared.add(
+          replacement.copyWith(id: nextId, createdAt: now, updatedAt: now),
+        );
+      }
+    }
+
+    var insertAt = configs.indexWhere(
+      (config) => existingIds.contains(config.id),
+    );
+    final retained = configs
+        .where((config) => !existingIds.contains(config.id))
+        .toList();
+    if (insertAt < 0 || insertAt > retained.length) insertAt = retained.length;
+    retained.insertAll(insertAt, prepared);
+    configs = retained;
+    await _store.saveConfigs(configs);
+    notifyListeners();
+  }
+
   Future<void> deleteConfig(int id) async {
     await _ensureInitialized();
     configs.removeWhere((e) => e.id == id);
@@ -459,17 +510,25 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> syncLinkedStcp(FrpConfig primary) async {
+  Future<void> syncLinkedFallback(FrpConfig primary) async {
     await _ensureInitialized();
-    // 与原有 createLinkedStcpConfig 一致：更新同组 STCP 子配置字段
     if (!primary.useFallback || primary.fallbackTo.isEmpty) return;
-    final stcp = configs
-        .where((e) => e.groupId == primary.groupId && e.protocol == 'stcp')
+    final fallbackProtocol = ConfigDomainService.fallbackProtocolFor(
+      primary.protocol,
+    );
+    if (fallbackProtocol == null) return;
+    final linked = configs
+        .where(
+          (config) =>
+              config.groupId == primary.groupId &&
+              config.protocol == fallbackProtocol &&
+              config.name == primary.fallbackTo,
+        )
         .toList();
-    final derived = createLinkedStcpConfig(primary);
-    for (final e in stcp) {
-      final i = configs.indexOf(e);
-      configs[i] = e.copyWith(
+    final derived = createLinkedFallbackConfig(primary);
+    for (final config in linked) {
+      final i = configs.indexOf(config);
+      configs[i] = config.copyWith(
         serverName: derived.serverName,
         secretKey: derived.secretKey,
         useEncryption: derived.useEncryption,
@@ -480,8 +539,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> syncLinkedStcp(FrpConfig primary) => syncLinkedFallback(primary);
+
+  FrpConfig createLinkedFallbackConfig(FrpConfig primary) {
+    return ConfigDomainService.createLinkedFallbackConfig(primary);
+  }
+
   FrpConfig createLinkedStcpConfig(FrpConfig xtcp) {
-    return ConfigDomainService.createLinkedStcpConfig(xtcp);
+    return createLinkedFallbackConfig(xtcp);
   }
 
   /// 分组聚合：用于仪表盘 Applications 列表
