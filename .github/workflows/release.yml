@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. 0.1.8 (tag will be v0.1.8)'
+        description: 'Release version, e.g. 0.1.9 (tag will be v0.1.9)'
         required: true
-        default: '0.1.8'
+        default: '0.1.9'
       version_code:
         description: 'Monotonically increasing Android version code'
         required: true
-        default: '12'
+        default: '13'
 
 permissions:
   contents: write
