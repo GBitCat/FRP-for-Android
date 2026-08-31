@@ -3,7 +3,7 @@ name: Flutter PR Gate
 on:
   pull_request:
   push:
-    branches: [main, master]
+    branches: [main, beta]
   workflow_dispatch:
 
 permissions:

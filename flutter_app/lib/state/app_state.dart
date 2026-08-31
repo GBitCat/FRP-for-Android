@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
+import 'package:path_provider/path_provider.dart';
 
 import '../models/connection_status.dart';
 import '../models/frp_config.dart';
@@ -11,6 +12,7 @@ import '../services/config_import_export.dart';
 import '../services/config_domain_service.dart';
 import '../services/config_store.dart';
 import '../services/frp_engine.dart';
+import '../services/sensitive_file_cache.dart';
 import '../services/toml_generator.dart' as toml;
 
 /// 主题设置
@@ -105,6 +107,11 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _loadData() async {
+    try {
+      await SensitiveFileCache.cleanupStaleFiles(await getTemporaryDirectory());
+    } catch (_) {
+      // Temporary-file cleanup must never block encrypted config loading.
+    }
     _resolveStun();
     hideFromRecents = await _store.loadHideFromRecents();
     if (hideFromRecents) {

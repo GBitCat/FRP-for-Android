@@ -45,11 +45,18 @@ class FrpcService : Service() {
         private const val RUNTIME_CONFIG_NAME = "frpc-runtime.toml"
         private const val MAX_CONFIG_BYTES = 512 * 1024
 
-        internal fun redactLogLine(line: String): String = line.replace(
-            Regex(
-                "(?i)\\b(token|secretKey|password|clientSecret)\\s*[=:]\\s*(\\\"[^\\\"]*\\\"|[^\\s,;]+)"
-            )
-        ) { match -> "${match.groupValues[1]}=***" }
+        internal fun redactLogLine(line: String): String {
+            val authorizationRedacted = line.replace(
+                Regex(
+                    """(?i)\b(authorization)\s*[=:]\s*("[^"]*"|'[^']*'|(?:bearer\s+)?[^\s,;]+)"""
+                )
+            ) { match -> "${match.groupValues[1]}=***" }
+            return authorizationRedacted.replace(
+                Regex(
+                    """(?i)\b(token|secret(?:[\s_-]*key)?|client[\s_-]*secret|password|passwd|credential|api[\s_-]*key|private[\s_-]*key|access[\s_-]*key|cookie|sk)\b\s*[=:]\s*("[^"]*"|'[^']*'|[^\s,;]+)"""
+                )
+            ) { match -> "${match.groupValues[1]}=***" }
+        }
 
         @Volatile
         var instance: FrpcService? = null
@@ -114,7 +121,10 @@ class FrpcService : Service() {
                     .remove(KEY_PENDING_START_ID)
                     .commit()
                 deleteRuntimeConfig(context)
-                context.stopService(Intent(context, FrpcService::class.java))
+                // Do not call stopService() while a startForegroundService()
+                // request may still be queued. The queued service must enter
+                // onStartCommand(), call startForeground(), observe that its
+                // request ID was revoked above, and then stop itself cleanly.
             }
         }
 

@@ -29,7 +29,7 @@
 - ✅ **自动 P2P Fallback**：开启 Fallback 后，XTCP 自动派生 STCP，XUDP 自动派生 SUDP
 - ✅ **Server 配置预览**：全局段 + 该 Server 下所有启用应用配置拼接，带分组注释
 - ✅ **对端配置推导**：一键生成对端 frpc 配置并复制，`localPort` 默认匹配 visitor 端口
-- ✅ **导入 / 导出**：默认脱敏 zip 保留配置结构并清空已识别的凭据赋值（分享前仍需检查自定义字段与注释）；需要迁移凭据时使用密码加密备份
+- ✅ **导入 / 导出**：默认脱敏 zip 保留配置结构、清空已识别的凭据赋值并移除 Manual TOML 注释（分享前仍需检查自定义字段值）；需要迁移凭据时使用密码加密备份
 
 ### 仪表盘
 - ✅ **Server 卡片**：一键开关、连接状态（Active / 未启动）、连接方式（P2P / 中继）
@@ -46,6 +46,7 @@
 - ✅ **玻璃 / 折射风格 UI**：透明玻璃导航栏、毛玻璃弹窗
 - ✅ **主题**：浅色 / 深色 / 跟随系统 + 7 种主题色，持久化保存
 - ✅ **日志查看**：frpc 运行日志实时查看
+- ✅ **敏感信息保护**：全局禁止系统截图/录屏；Token 与 Secret Key 默认隐藏；配置与日志剪贴板 60 秒自动清理
 
 ## 🚀 快速开始
 
@@ -72,6 +73,7 @@ CPU / 内存占用；Android debug keystore 也保存在开发 HOME 卷中，因
 可以保留数据覆盖安装。首次使用可执行：
 
 ```bash
+./scripts/install-hooks.sh
 ./docker-dev.sh flutter pub get
 ./docker-dev.sh flutter test
 ./docker-dev.sh flutter build apk --debug
@@ -87,12 +89,16 @@ CPU / 内存占用；Android debug keystore 也保存在开发 HOME 卷中，因
 
 ```bash
 git clone https://github.com/GBitCat/FRP-for-Android.git
-cd FRP-for-Android/flutter_app
-
-flutter pub get
-flutter build apk --release
-# 输出：build/app/outputs/flutter-apk/app-release.apk
+cd FRP-for-Android
+./scripts/install-hooks.sh
+./docker-dev.sh flutter pub get
+./docker-dev.sh flutter build apk --release
+# 输出：flutter_app/build/app/outputs/flutter-apk/app-release.apk
 ```
+
+发布密钥、密码、签名 lineage、用户备份和截图必须存放在 Git checkout 与所有 Docker
+挂载/构建上下文之外。仓库钩子会拦截敏感文件名，GitHub Actions 会对完整历史运行固定
+版本且校验摘要的 Gitleaks。详见 [SECURITY.md](SECURITY.md) 与 [SIGNING.md](SIGNING.md)。
 
 > `libfrpc.so` 来自 `GBitCat/frp-xudp` 的校验发布资产，已打包在
 > `android/app/src/main/jniLibs/arm64-v8a/`，无需额外下载。当前 APK 仅支持
@@ -117,7 +123,9 @@ FRP-for-Android/
 │   │   │   ├── port_mapping_parser.dart # 多端口列表 / 范围解析
 │   │   │   ├── toml_generator.dart   # TOML 生成 / 预览
 │   │   │   ├── config_import_export.dart # ZIP / JSON 导入导出
-│   │   │   └── backup_crypto.dart    # 密码加密备份桥接
+│   │   │   ├── backup_crypto.dart    # 密码加密备份桥接
+│   │   │   ├── sensitive_file_cache.dart # 敏感临时文件定向清理
+│   │   │   └── secure_clipboard.dart # 敏感剪贴板与定时清理桥接
 │   │   ├── state/
 │   │   │   └── app_state.dart        # 全局状态
 │   │   ├── screens/                  # 仪表盘 / 配置 / 设置 / 编辑 / 日志
@@ -210,6 +218,8 @@ secretKey = "your_secret_key"
 4. **XUDP 全链路版本**：`frps`、XUDP proxy 端 `frpc`、XUDP visitor 端 `frpc` 必须全部使用兼容的 `GBitCat/frp-xudp`，推荐统一为当前内置的 `v0.71.0-v2`；不能只在 Android 端替换，也不要与官方 FRP 或其他 fork 混用
 5. **后台驻留**：为保证长时间稳定连接，请允许通知权限、取消电池优化（应用内首次启动会引导跳转），部分国产 ROM 还需在系统设置中允许后台运行
 6. **内存显示**：卡片显示的是 App 与 frpc 进程的 RSS 占用，按设备总内存计算百分比
+7. **敏感画面**：应用默认启用 Android `FLAG_SECURE`，系统截图、录屏与最近任务缩略图会被阻止或隐藏
+8. **旧版签名限制**：Android 8.1 及更早版本不支持当前 APK 使用的 v3 密钥轮换；只从官方 Releases 安装并核对 SHA-256
 
 ## 🤝 贡献
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Isolated release signing material from the repository and Docker mounts.
+- Added sensitive filename pre-commit checks and complete-history Gitleaks CI.
+- Deleted imported backup cache copies after use and removed stale backup cache artifacts at startup.
+- Expanded runtime log redaction and removed free-form manual-TOML comments from redacted backups.
+- Added screenshot protection, hidden server tokens by default, and a sensitive clipboard with 60-second automatic clearing.
+
 ## [0.1.9] - 2026-09-01
 
 ### Added

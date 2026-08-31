@@ -1,76 +1,50 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+Only the latest published `0.1.x` release receives security fixes.
 
-## Reporting a Vulnerability
+## Report a vulnerability privately
 
-If you discover a security vulnerability in FRP Android, please report it responsibly.
+Do not open a public issue or attach credentials, backups, logs, screenshots,
+server addresses, or proof-of-concept secrets to a public discussion.
 
-### How to Report
-1. **Do not** open a public GitHub issue
-2. Email security concerns to [security@example.com]
-3. Include detailed information about the vulnerability
-4. Provide steps to reproduce if possible
+Use GitHub's private vulnerability reporting form:
 
-### What to Include
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Suggested fix (if any)
+https://github.com/GBitCat/FRP-for-Android/security/advisories/new
 
-### Response Timeline
-- **Initial Response**: Within 48 hours
-- **Status Update**: Within 1 week
-- **Fix Release**: Depends on severity
+Include the affected version, impact, reproduction steps, and a minimal
+redacted proof of concept. The maintainer will acknowledge the report and
+coordinate disclosure through the private advisory.
 
-## Security Best Practices
+## User security guidance
 
-### For Users
-1. **Keep the app updated**: Always use the latest version
-2. **Use strong tokens**: Use complex, unique tokens for FRP connections
-3. **Limit permissions**: Only grant necessary permissions
-4. **Monitor connections**: Regularly check active connections
-5. **Use HTTPS**: Prefer HTTPS connections when possible
+- Install APKs only from this repository's Releases page and verify the
+  published SHA-256 file.
+- Use unique FRP tokens and secret keys. Rotate them if they were ever included
+  in a public issue, log, screenshot, or unencrypted backup.
+- A redacted export clears recognized credential fields but remains intended
+  for review and sharing. Use the password-encrypted backup for a complete
+  private migration.
+- Peer configurations and logs may contain infrastructure details. Their
+  clipboard entries are marked sensitive and automatically cleared after 60
+  seconds.
+- Android 8.1 and older cannot use APK Signature Scheme v3 key rotation. Direct
+  APK upgrades on those versions remain tied to the legacy release certificate;
+  see [SIGNING.md](SIGNING.md).
 
-### For Developers
-1. **Input validation**: Validate all user inputs
-2. **Secure storage**: Use Android Keystore for sensitive data
-3. **Network security**: Use HTTPS and certificate pinning
-4. **Code review**: All code changes require review
-5. **Dependency updates**: Keep dependencies updated
+## Developer controls
 
-## Security Features
+- Build and test through the Docker environment documented in `README.md`.
+- Keep production signing keys, passwords, lineages, `.env` files, user
+  backups, and screenshots outside the repository and outside mounted build
+  contexts.
+- Run `./scripts/install-hooks.sh` after cloning. The pre-commit hook rejects
+  sensitive filenames, and GitHub Actions scans complete history with a pinned
+  Gitleaks release.
+- Never paste real configurations or logs into tests. Use unmistakably fake
+  examples such as `example.com` and `test-only-secret`.
 
-### Current Security Measures
-- Token-based authentication for FRP connections
-- Local storage encryption for sensitive data
-- Network traffic encryption (when using HTTPS)
-- Permission-based access control
-
-### Planned Security Features
-- Certificate pinning for FRP server connections
-- Biometric authentication for app access
-- VPN integration for secure tunnels
-- Audit logging for security events
-
-## Vulnerability Disclosure
-
-We follow responsible disclosure principles:
-1. Report vulnerabilities privately
-2. Allow reasonable time for fixes
-3. Credit reporters in security advisories
-4. Publish security updates promptly
-
-## Contact
-
-For security-related questions or concerns:
-- Email: [security@example.com]
-- GitHub: Use private vulnerability reporting
-
-## Acknowledgments
-
-We thank security researchers who responsibly disclose vulnerabilities.
+Repository history was rewritten after a legacy signing key was committed.
+History removal reduces accidental discovery but cannot revoke copies already
+downloaded; the legacy key must continue to be treated as compromised.

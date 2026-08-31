@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../services/secure_clipboard.dart';
 import '../state/app_state.dart';
 
 class LogsScreen extends StatefulWidget {
@@ -58,11 +58,19 @@ class _LogsScreenState extends State<LogsScreen> {
     super.dispose();
   }
 
-  void _copyAll() {
-    Clipboard.setData(ClipboardData(text: _logs.join('\n')));
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Logs copied to clipboard')));
+  Future<void> _copyAll() async {
+    try {
+      await SecureClipboard.copy(_logs.join('\n'));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Logs copied; clipboard clears in 60s')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Unable to copy logs')));
+    }
   }
 
   @override

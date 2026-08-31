@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+"$repo_root/scripts/security_check.sh" --staged
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --staged --redact=100 --no-banner --no-color "$repo_root"
+else
+  echo 'Note: gitleaks is not installed locally; CI will run the pinned scanner.' >&2
+fi

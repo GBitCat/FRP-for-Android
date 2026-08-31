@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:frp_app/models/frp_config.dart';
 import 'package:frp_app/models/server_config.dart';
 import 'package:frp_app/screens/config_edit_screen.dart';
+import 'package:frp_app/screens/configs_screen.dart';
 import 'package:frp_app/screens/main_shell.dart';
 import 'package:frp_app/state/app_state.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -130,7 +131,35 @@ void main() {
     );
     expect(find.text('Compression'), findsOneWidget);
     expect(find.text('Configuration Preview'), findsOneWidget);
+    final secretField = tester.widget<TextField>(
+      find.byKey(const ValueKey('secret_key')),
+    );
+    expect(secretField.obscureText, isTrue);
+    expect(secretField.enableSuggestions, isFalse);
+    expect(secretField.autocorrect, isFalse);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('server tokens are hidden and suggestions stay disabled', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ServerEditDialog(
+            initial: ServerConfig(serverId: 'SERVER01', token: 'test-token'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final tokenField = tester.widget<TextField>(
+      find.byKey(const ValueKey('server_token')),
+    );
+    expect(tokenField.obscureText, isTrue);
+    expect(tokenField.enableSuggestions, isFalse);
+    expect(tokenField.autocorrect, isFalse);
   });
 
   testWidgets('adding protocols reveals one multi-port field per protocol', (

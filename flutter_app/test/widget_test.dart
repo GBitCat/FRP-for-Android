@@ -391,6 +391,8 @@ requestHeaders.set.Authorization = "Bearer auth-secret"
 requestHeaders.set.Cookie = "session-cookie"
 api_key = "api-secret"
 private-key = "private-secret"
+# token = "comment-token"
+description = "preserved" # apiKey = "inline-comment-secret"
 password = """
 multiline-secret
 still-secret
@@ -417,6 +419,9 @@ fallbackTimeoutMs = 3000''',
       expect(manualToml, contains('serverName = "peer-two"'));
       expect(manualToml, contains('bindPort = 2222'));
       expect(manualToml, contains('fallbackTimeoutMs = 3000'));
+      expect(manualToml, isNot(contains('# token')));
+      expect(manualToml, contains('description = "preserved"'));
+      expect(manualToml, isNot(contains('# apiKey')));
       expect(
         RegExp(r'^secretKey\s*=\s*""', multiLine: true).hasMatch(manualToml),
         isTrue,
@@ -434,6 +439,8 @@ fallbackTimeoutMs = 3000''',
         'session-cookie',
         'api-secret',
         'private-secret',
+        'comment-token',
+        'inline-comment-secret',
         'multiline-secret',
         'still-secret',
       ]) {

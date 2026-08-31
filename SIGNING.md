@@ -9,6 +9,11 @@ signing material from these environment variables:
 - `FRP_RELEASE_KEY_PASSWORD`
 - `FRP_RELEASE_CERT_SHA256`
 
+Store all local key files, passwords, and signing lineages outside the Git
+checkout and outside every Docker bind mount/build context. Production signing
+material must never be copied into a development container or persistent
+development cache volume.
+
 The GitHub release workflow uses an APK Signature Scheme v3 lineage to rotate
 from the compromised legacy certificate on Android 9+ while retaining upgrade
 compatibility on Android 8.1 and older. Configure a protected `release`
@@ -36,7 +41,9 @@ unset until the migration and upgrade-install tests below are complete. The
 workflow fails closed unless that environment variable is exactly `true`.
 
 The key previously committed to this repository must be treated as compromised.
-Removing it from the current tree does not remove it from Git history. Existing
+The public branch and tag history was rewritten to remove the key and associated
+literal signing configuration, but rewriting cannot revoke previously downloaded
+copies or cached GitHub objects. Existing
 installations signed with that key need an explicit migration plan (Google Play
 App Signing/key upgrade or an APK signing lineage where supported) before a new
 production key is used. Do not silently replace the key for an existing release.
@@ -59,6 +66,6 @@ Migration procedure:
    old signer for API 24–27 and the new signer for API 28–36, then fails closed
    if either pinned fingerprint differs.
 
-If the leaked key was ever used for public releases, rewriting Git history is
-still recommended to reduce accidental reuse, but it does not revoke copies of
-the key. Rotate the production signing identity first.
+If another signing secret is exposed, rotate or revoke it first, remove it from
+all active systems, then follow GitHub's sensitive-data history-removal process.
+Never rely on deleting the current-tree file alone.

@@ -617,6 +617,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
   late TextEditingController _serverId;
   late String _protocol;
   late bool _tcpMux;
+  bool _showToken = false;
   late int _heartbeatInterval;
   late int _heartbeatTimeout;
   late int _keepalive;
@@ -799,10 +800,21 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
                   ),
                   const SizedBox(height: 12),
                   TextField(
+                    key: const ValueKey('server_token'),
                     controller: _token,
-                    decoration: const InputDecoration(
+                    obscureText: !_showToken,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration: InputDecoration(
                       labelText: 'Token',
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _showToken ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () =>
+                            setState(() => _showToken = !_showToken),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),

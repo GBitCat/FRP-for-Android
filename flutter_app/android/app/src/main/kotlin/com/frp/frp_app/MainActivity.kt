@@ -2,12 +2,20 @@ package com.frp.frp_app
 
 import android.Manifest
 import android.app.ActivityManager
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.PersistableBundle
 import android.provider.Settings
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -25,6 +33,13 @@ class MainActivity : FlutterActivity() {
 
     private var channel: MethodChannel? = null
     private var secureChannel: MethodChannel? = null
+    private val clipboardHandler = Handler(Looper.getMainLooper())
+    private var sensitiveClipSequence = 0L
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -94,6 +109,10 @@ class MainActivity : FlutterActivity() {
                                 requireNotNull(call.argument<String>("password")),
                             )
                         )
+                        "copySensitiveText" -> {
+                            copySensitiveText(requireNotNull(call.argument("value")))
+                            result.success(null)
+                        }
                         else -> result.notImplemented()
                     }
                 } catch (e: IllegalArgumentException) {
@@ -158,6 +177,34 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             // ignore
         }
+    }
+
+    /** Marks credentials as sensitive and removes them from the clipboard after 60 seconds. */
+    private fun copySensitiveText(value: String) {
+        require(value.toByteArray(Charsets.UTF_8).size <= 2 * 1024 * 1024) {
+            "Clipboard content exceeds the 2 MiB limit"
+        }
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val sequence = ++sensitiveClipSequence
+        val marker = "FRP sensitive data $sequence"
+        val clip = ClipData.newPlainText(marker, value)
+        if (Build.VERSION.SDK_INT >= 33) {
+            clip.description.extras = PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        }
+        clipboard.setPrimaryClip(clip)
+        clipboardHandler.postDelayed({
+            if (sequence != sensitiveClipSequence) return@postDelayed
+            if (clipboard.primaryClipDescription?.label?.toString() != marker) {
+                return@postDelayed
+            }
+            if (Build.VERSION.SDK_INT >= 28) {
+                clipboard.clearPrimaryClip()
+            } else {
+                clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+            }
+        }, 60_000)
     }
 
     private fun getIpv4(): String? {

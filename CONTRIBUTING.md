@@ -25,16 +25,21 @@ Thank you for your interest in contributing to FRP Android! This document provid
 ## Development Setup
 
 ### Prerequisites
-- Android Studio Hedgehog or later
-- Android SDK 34
-- Java 17
+- Docker Engine with Compose support
+- ADB only when testing a physical device or emulator
 - Git
 
 ### Setting Up Development Environment
-1. Clone the repository
-2. Open the project in Android Studio
-3. Sync Gradle files
-4. Run the app on an emulator or device
+1. Clone the repository.
+2. Run `./scripts/install-hooks.sh`.
+3. Resolve dependencies with `./docker-dev.sh flutter pub get`.
+4. Run tests with `./docker-dev.sh flutter test`.
+5. Build with `./docker-dev.sh flutter build apk --debug`.
+
+Pub, Gradle, development HOME, and the Android debug key use persistent Docker
+volumes. Do not place release keys, passwords, user backups, real configuration,
+or screenshots anywhere in the checkout. The local hook and repository CI
+reject sensitive filenames and scan Git history for secrets.
 
 ### Code Style
 - Follow Kotlin coding conventions
@@ -44,7 +49,7 @@ Thank you for your interest in contributing to FRP Android! This document provid
 
 ### Testing
 - Write unit tests for new functionality
-- Ensure all tests pass before submitting
+- Ensure all tests pass in the Docker environment before submitting
 - Test on different Android versions if possible
 
 ## Pull Request Process

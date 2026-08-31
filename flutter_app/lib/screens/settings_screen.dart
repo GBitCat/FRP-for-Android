@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../services/backup_crypto.dart';
 import '../services/config_import_export.dart';
 import '../services/frp_engine.dart';
+import '../services/sensitive_file_cache.dart';
 import '../state/app_state.dart';
 import '../widgets/app_card.dart';
 import '../widgets/glass_sliver_appbar.dart';
@@ -31,6 +32,8 @@ class SettingsScreen extends StatelessWidget {
   ];
 
   Future<void> _importConfig(BuildContext context) async {
+    File? managedImportCopy;
+    Directory? importCacheDirectory;
     try {
       final path = await FlutterFileDialog.pickFile(
         params: OpenFileDialogParams(
@@ -44,6 +47,11 @@ class SettingsScreen extends StatelessWidget {
       );
       if (path == null || path.isEmpty) return;
       final file = File(path);
+      final cacheDirectory = await getTemporaryDirectory();
+      if (SensitiveFileCache.isManagedImportCopy(file, cacheDirectory)) {
+        managedImportCopy = file;
+        importCacheDirectory = cacheDirectory;
+      }
       if (await file.length() > BackupCrypto.maxEncryptedBytes) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -80,6 +88,13 @@ class SettingsScreen extends StatelessWidget {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Failed to import config')));
+    } finally {
+      if (managedImportCopy != null && importCacheDirectory != null) {
+        await SensitiveFileCache.deleteManagedImportCopy(
+          managedImportCopy,
+          importCacheDirectory,
+        );
+      }
     }
   }
 

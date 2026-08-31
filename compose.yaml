@@ -15,6 +15,11 @@ x-dev-volumes: &dev-volumes
   - gradle-cache:/cache/gradle
   - dev-home:/cache/home
 
+x-cache-volumes: &cache-volumes
+  - pub-cache:/cache/pub
+  - gradle-cache:/cache/gradle
+  - dev-home:/cache/home
+
 services:
   cache-init:
     <<: *dev-image
@@ -25,7 +30,17 @@ services:
       - >-
         chown -R ${LOCAL_UID:-1000}:${LOCAL_GID:-1000}
         /cache/pub /cache/gradle /cache/home
-    volumes: *dev-volumes
+    volumes: *cache-volumes
+    restart: "no"
+
+  source-check:
+    <<: *dev-image
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    network_mode: none
+    command: ["/workspace/scripts/security_check.sh", "--worktree"]
+    volumes:
+      - .:/workspace:ro
     restart: "no"
 
   dev:
@@ -38,6 +53,8 @@ services:
     tty: true
     depends_on:
       cache-init:
+        condition: service_completed_successfully
+      source-check:
         condition: service_completed_successfully
     environment:
       HOME: /cache/home

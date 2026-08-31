@@ -2,6 +2,8 @@ package com.frp.frp_app
 
 import android.content.Context
 import android.os.Build
+import android.view.WindowManager
+import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.After
@@ -92,11 +94,31 @@ class FrpcServiceIntegrationTest {
 
     @Test
     fun sensitiveFrpcLogFieldsAreRedacted() {
-        val line = "token = \"one\" secretKey=two password:three clientSecret=four"
+        val line = "token = \"one\" secretKey=two password:three clientSecret=four " +
+            "passwd=five credential=six apiKey=seven private_key=eight access-key=nine " +
+            "cookie=ten sk=eleven Authorization: Bearer twelve"
+        val redacted = FrpcService.redactLogLine(line)
         assertEquals(
-            "token=*** secretKey=*** password=*** clientSecret=***",
-            FrpcService.redactLogLine(line)
+            "token=*** secretKey=*** password=*** clientSecret=*** passwd=*** " +
+                "credential=*** apiKey=*** private_key=*** access-key=*** cookie=*** " +
+                "sk=*** Authorization=***",
+            redacted
         )
+        for (secret in listOf("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")) {
+            assertFalse(redacted.contains(secret))
+        }
+    }
+
+    @Test
+    fun activityPreventsScreenshotsAndUnsecuredRecentThumbnails() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertTrue(
+                    (activity.window.attributes.flags and
+                        WindowManager.LayoutParams.FLAG_SECURE) != 0
+                )
+            }
+        }
     }
 
     @Test

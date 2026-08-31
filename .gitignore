@@ -112,9 +112,31 @@ screenshot*.png
 
 # 密钥 / 签名 / 证书
 *.keystore
+*.KEYSTORE
 *.jks
+*.JKS
+*.ks
+*.KS
 *.p12
+*.P12
+*.pfx
+*.PFX
 *.pem
+*.PEM
+*.key
+*.KEY
+*.pk8
+*.PK8
 *.crt
 *.hprof
 .release-signing-backup/
+
+# 本地凭据、用户备份与服务配置
+.env
+.env.*
+!.env.example
+google-services.json
+*.frpbackup
+*.FRPBACKUP
+*backup*.zip
+*password*.txt

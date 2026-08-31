@@ -67,8 +67,8 @@ class ConfigImportExport {
   static const maxArchiveEntries = 64;
 
   /// Preserve manual proxy/visitor structure while clearing recognized
-  /// credential assignments. Manual TOML is free-form, so the archive notice
-  /// still asks users to review custom fields before sharing the ZIP.
+  /// credential assignments. Comments are omitted because free-form comment
+  /// text cannot be reliably classified as non-sensitive.
   static String _redactManualToml(String toml) {
     final redacted = <String>[];
     String? skippedMultilineDelimiter;
@@ -82,15 +82,18 @@ class ConfigImportExport {
       }
 
       final trimmed = line.trimLeft();
-      if (trimmed.isEmpty || trimmed.startsWith('#')) {
+      if (trimmed.isEmpty) {
         redacted.add(line);
+        continue;
+      }
+      if (trimmed.startsWith('#')) {
         continue;
       }
 
       final separator = line.indexOf('=');
       if (separator <= 0 ||
           !_isSensitiveTomlKey(line.substring(0, separator))) {
-        redacted.add(line);
+        redacted.add(_stripInlineTomlComment(line));
         continue;
       }
 
@@ -113,6 +116,33 @@ class ConfigImportExport {
     }
 
     return redacted.join('\n');
+  }
+
+  static String _stripInlineTomlComment(String line) {
+    var inBasicString = false;
+    var inLiteralString = false;
+    var escaped = false;
+    for (var i = 0; i < line.length; i++) {
+      final character = line[i];
+      if (inBasicString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character == '\\') {
+          escaped = true;
+        } else if (character == '"') {
+          inBasicString = false;
+        }
+      } else if (inLiteralString) {
+        if (character == "'") inLiteralString = false;
+      } else if (character == '"') {
+        inBasicString = true;
+      } else if (character == "'") {
+        inLiteralString = true;
+      } else if (character == '#') {
+        return line.substring(0, i).trimRight();
+      }
+    }
+    return line;
   }
 
   static bool _isSensitiveTomlKey(String rawKey) {
@@ -198,8 +228,8 @@ class ConfigImportExport {
       }
     } else {
       const notice =
-          'Recognized credential assignments were cleared while manual TOML structure was preserved.\n'
-          'Re-enter credentials after import, and review custom TOML fields and comments before sharing this archive.\n';
+          'Recognized credential assignments were cleared and manual TOML comments were removed while structure was preserved.\n'
+          'Re-enter credentials after import, and review custom TOML field values before sharing this archive.\n';
       archive.addFile(
         ArchiveFile('REDACTED.txt', notice.length, utf8.encode(notice)),
       );

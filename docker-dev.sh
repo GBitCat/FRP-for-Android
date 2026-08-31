@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+"$project_dir/scripts/security_check.sh" --worktree
 local_uid="${LOCAL_UID:-$(id -u)}"
 local_gid="${LOCAL_GID:-$(id -g)}"
 dev_image="${DEV_IMAGE:-frp-for-android-dev:ubuntu-26.04}"

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models/frp_config.dart';
 import '../models/server_config.dart';
 import '../services/config_domain_service.dart';
 import '../services/config_validator.dart';
 import '../services/port_mapping_parser.dart';
+import '../services/secure_clipboard.dart';
 import '../services/toml_generator.dart' as toml;
 import '../state/app_state.dart';
 import '../widgets/frosted_dialog.dart';
@@ -958,6 +958,8 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                   controller: _ctrl('secretKey'),
                   onChanged: (value) => setState(() => _secretKey = value),
                   obscureText: !_showSecretKey,
+                  enableSuggestions: false,
+                  autocorrect: false,
                   decoration: _compactDecoration(
                     'Secret Key *',
                     hint: 'Shared secret for all protocols in this group',
@@ -1099,9 +1101,15 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
                   child: const Text('Close'),
                 ),
                 TextButton(
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: text));
-                    _toast('Peer config copied');
+                  onPressed: () async {
+                    try {
+                      await SecureClipboard.copy(text);
+                      if (mounted) {
+                        _toast('Peer config copied; clipboard clears in 60s');
+                      }
+                    } catch (_) {
+                      if (mounted) _toast('Unable to copy peer config');
+                    }
                   },
                   child: const Text('Copy'),
                 ),
