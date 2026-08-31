@@ -9,6 +9,15 @@ class PortMappingParseResult {
   bool get isValid => error == null;
 }
 
+class PortListParseResult {
+  final List<int> ports;
+  final String? error;
+
+  const PortListParseResult({this.ports = const [], this.error});
+
+  bool get isValid => error == null;
+}
+
 /// Parses compact port specifications such as `22,80,8000-8002` and pairs
 /// the expanded local and remote values by position.
 class PortMappingParser {
@@ -51,6 +60,37 @@ class PortMappingParser {
     );
   }
 
+  /// Parses a single compact port specification such as
+  /// `9002,9010-9012`. This is used by grouped visitor configurations where
+  /// every selected protocol owns one bind-port input.
+  static PortListParseResult parsePorts(
+    String spec, {
+    String label = 'Bind',
+    bool allowDisabledPort = false,
+  }) {
+    final result = _parseSpec(
+      spec,
+      label,
+      allowDisabledPort: allowDisabledPort,
+    );
+    if (result.error != null) {
+      return PortListParseResult(error: result.error);
+    }
+    if (allowDisabledPort &&
+        result.ports.length > 1 &&
+        result.ports.contains(-1)) {
+      return PortListParseResult(
+        error: '$label disabled port -1 cannot be combined with other ports',
+      );
+    }
+    if (result.ports.toSet().length != result.ports.length) {
+      return PortListParseResult(
+        error: '$label ports must not contain duplicates',
+      );
+    }
+    return PortListParseResult(ports: result.ports);
+  }
+
   static String formatPorts(Iterable<int> values) {
     final ports = values.toList();
     if (ports.isEmpty) return '';
@@ -71,7 +111,11 @@ class PortMappingParser {
     return parts.join(',');
   }
 
-  static _PortSpecParseResult _parseSpec(String input, String label) {
+  static _PortSpecParseResult _parseSpec(
+    String input,
+    String label, {
+    bool allowDisabledPort = false,
+  }) {
     final normalized = input
         .trim()
         .replaceAll('，', ',')
@@ -93,7 +137,11 @@ class PortMappingParser {
 
       final single = int.tryParse(part);
       if (single != null) {
-        final error = _validatePort(single, label);
+        final error = _validatePort(
+          single,
+          label,
+          allowDisabledPort: allowDisabledPort,
+        );
         if (error != null) return _PortSpecParseResult(error: error);
         ports.add(single);
       } else {
@@ -105,11 +153,19 @@ class PortMappingParser {
         }
         final start = int.parse(range.group(1)!);
         final end = int.parse(range.group(2)!);
-        final startError = _validatePort(start, label);
+        final startError = _validatePort(
+          start,
+          label,
+          allowDisabledPort: allowDisabledPort,
+        );
         if (startError != null) {
           return _PortSpecParseResult(error: startError);
         }
-        final endError = _validatePort(end, label);
+        final endError = _validatePort(
+          end,
+          label,
+          allowDisabledPort: allowDisabledPort,
+        );
         if (endError != null) return _PortSpecParseResult(error: endError);
         if (start > end) {
           return _PortSpecParseResult(
@@ -135,9 +191,16 @@ class PortMappingParser {
     return _PortSpecParseResult(ports: ports);
   }
 
-  static String? _validatePort(int port, String label) {
+  static String? _validatePort(
+    int port,
+    String label, {
+    bool allowDisabledPort = false,
+  }) {
+    if (allowDisabledPort && port == -1) return null;
     if (port < 1 || port > 65535) {
-      return '$label port must be between 1 and 65535';
+      return allowDisabledPort
+          ? '$label port must be -1 or between 1 and 65535'
+          : '$label port must be between 1 and 65535';
     }
     return null;
   }

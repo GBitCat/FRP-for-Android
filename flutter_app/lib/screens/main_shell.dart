@@ -143,7 +143,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               iconForeground: Theme.of(
                 context,
               ).colorScheme.onSecondaryContainer,
-              title: 'Form Config',
+              title: 'visitor.FormConfig',
               subtitle: 'Create a configuration with guided fields',
               onTap: () {
                 Navigator.of(context).pop();

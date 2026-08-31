@@ -42,4 +42,38 @@ void main() {
       '22,8000-8002,443',
     );
   });
+
+  test('single bind-port input expands ranges and rejects duplicates', () {
+    final result = PortMappingParser.parsePorts(
+      '39001，39003-39005',
+      label: 'XTCP bind',
+    );
+    expect(result.error, isNull);
+    expect(result.ports, [39001, 39003, 39004, 39005]);
+
+    expect(
+      PortMappingParser.parsePorts('39001,39001', label: 'XTCP bind').error,
+      'XTCP bind ports must not contain duplicates',
+    );
+    expect(
+      PortMappingParser.parsePorts('-1', label: 'XTCP bind').error,
+      'XTCP bind port must be between 1 and 65535',
+    );
+    expect(
+      PortMappingParser.parsePorts(
+        '-1',
+        label: 'XTCP bind',
+        allowDisabledPort: true,
+      ).ports,
+      [-1],
+    );
+    expect(
+      PortMappingParser.parsePorts(
+        '-1,39001',
+        label: 'XTCP bind',
+        allowDisabledPort: true,
+      ).error,
+      'XTCP bind disabled port -1 cannot be combined with other ports',
+    );
+  });
 }

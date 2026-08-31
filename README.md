@@ -23,12 +23,12 @@
 
 ### 配置管理
 - ✅ **多 Server 连接配置**：命名、8 位 ID、transport 参数（protocol / tcpMux / heartbeat / keepalive）
-- ✅ **应用配置**：表单式编辑（协议、本地 IP/端口、secretKey、加密/压缩、fallback）+ 手动编写 TOML
-- ✅ **TCP / UDP 多端口**：Form Config 支持逗号列表与端口范围（如 `22,8000-8002`），按顺序配对并展开为独立代理
-- ✅ **同组多成员 / 多协议**：Form Config 为每个成员独立保留字段，同一组既可混合 XTCP、XUDP 等协议，也可添加多个相同协议
-- ✅ **P2P Fallback 表单**：XTCP 可配置 STCP fallback，XUDP 可配置 SUDP fallback，并按成员名称独立配对
+- ✅ **应用配置**：组级 `visitor.FormConfig`（公共 name、serverName、secretKey、加密/压缩）+ 手动编写 TOML
+- ✅ **P2P 多端口**：XTCP / XUDP 各自支持逗号列表与端口范围，一个端口展开为一个 visitor
+- ✅ **同组多协议**：同一 `visitor.FormConfig` 可同时添加 XTCP 与 XUDP，公共字段只需填写一次
+- ✅ **自动 P2P Fallback**：开启 Fallback 后，XTCP 自动派生 STCP，XUDP 自动派生 SUDP
 - ✅ **Server 配置预览**：全局段 + 该 Server 下所有启用应用配置拼接，带分组注释
-- ✅ **对端配置推导**：一键生成对端 frpc 配置并复制
+- ✅ **对端配置推导**：一键生成对端 frpc 配置并复制，`localPort` 默认匹配 visitor 端口
 - ✅ **导入 / 导出**：默认脱敏 zip 保留配置结构并清空已识别的凭据赋值（分享前仍需检查自定义字段与注释）；需要迁移凭据时使用密码加密备份
 
 ### 仪表盘
@@ -52,7 +52,7 @@
 1. **下载 APK**：从 [Releases](https://github.com/GBitCat/FRP-for-Android/releases) 页面下载最新版本（`arm64-v8a`）
 2. **安装并打开**：首次启动会弹出省电策略提醒，建议允许通知并取消电池优化
 3. **添加 Server**：配置区 → Server → 添加你的 frps 服务器（地址、端口、token）
-4. **添加应用配置**：配置区 → 应用 → 添加 STCP / XTCP / XUDP 应用（选择所属 Server、协议、对端名称、secretKey）；使用 XUDP 前请先确认全部节点均已部署兼容的 `frp-xudp`
+4. **添加应用配置**：配置区 → `visitor.FormConfig` 添加 XTCP / XUDP visitor，或使用 Manual Config 编写其他 proxy / visitor；使用 XUDP 前请先确认全部节点均已部署兼容的 `frp-xudp`
 5. **启动连接**：仪表盘 → 打开 Server 开关
 6. **访问对端**：在手机上连接本地 visitor 端口（如 `127.0.0.1:39522`）即可访问对端设备
 
@@ -62,6 +62,26 @@
 - JDK 21
 - Android SDK
 - Git
+
+### Docker 开发环境（持久缓存）
+
+项目根目录的 `docker-dev.sh` 与 `compose.yaml` 使用同一组 Docker 命名卷保存 Pub、
+Gradle 和开发 HOME 缓存。
+开发容器停止或由 `docker compose run --rm` 删除后缓存仍会保留，且不会产生常驻的
+CPU / 内存占用；Android debug keystore 也保存在开发 HOME 卷中，因此后续 Debug APK
+可以保留数据覆盖安装。首次使用可执行：
+
+```bash
+./docker-dev.sh flutter pub get
+./docker-dev.sh flutter test
+./docker-dev.sh flutter build apk --debug
+```
+
+默认通过宿主机 `127.0.0.1:8118` 代理下载依赖；可通过 `HTTP_PROXY`、
+`HTTPS_PROXY` 和 `NO_PROXY` 覆盖。安装了 Compose 插件时也可以使用
+`LOCAL_UID=1000 LOCAL_GID=1000 docker compose run --rm dev <命令>`。
+`docker compose down` 不会删除缓存，只有显式执行 `docker compose down -v` 才会删除
+三个命名卷。
 
 ### 构建步骤
 
@@ -92,9 +112,12 @@ FRP-for-Android/
 │   │   │   └── connection_status.dart
 │   │   ├── services/
 │   │   │   ├── frp_engine.dart       # MethodChannel 桥接
-│   │   │   ├── config_store.dart     # SharedPreferences 存储
+│   │   │   ├── config_store.dart     # Keystore 加密配置存储
+│   │   │   ├── config_domain_service.dart # 分组、命名与 Fallback 派生
+│   │   │   ├── port_mapping_parser.dart # 多端口列表 / 范围解析
 │   │   │   ├── toml_generator.dart   # TOML 生成 / 预览
-│   │   │   └── config_import_export.dart # 导入导出
+│   │   │   ├── config_import_export.dart # ZIP / JSON 导入导出
+│   │   │   └── backup_crypto.dart    # 密码加密备份桥接
 │   │   ├── state/
 │   │   │   └── app_state.dart        # 全局状态
 │   │   ├── screens/                  # 仪表盘 / 配置 / 设置 / 编辑 / 日志
@@ -103,17 +126,20 @@ FRP-for-Android/
 │   │   ├── kotlin/com/frp/frp_app/
 │   │   │   ├── MainActivity.kt       # Flutter 桥接
 │   │   │   ├── FrpcService.kt        # 前台服务（frpc 进程管理 / 通知）
-│   │   │   └── BootReceiver.kt       # 开机自启
+│   │   │   ├── BootReceiver.kt       # 开机自启
+│   │   │   ├── SecureStringCodec.kt  # Android Keystore 配置加密
+│   │   │   └── BackupCipher.kt       # PBKDF2 + AES-256-GCM 备份加密
 │   │   └── jniLibs/arm64-v8a/libfrpc.so
 │   └── pubspec.yaml
-└── scripts/                          # 辅助脚本
+├── docker-dev.sh / compose.yaml      # 持久缓存 Docker 开发环境
+└── scripts/                          # 构建、测试与部署脚本
 ```
 
 ## 📝 使用说明
 
 ### 配置区
 - **Server**：管理多个 frps 服务器连接；可命名、编辑、预览拼接配置、切换当前 Server
-- **应用配置**：添加 TCP / UDP / STCP / XTCP / XUDP 或手动配置；TCP / UDP 表单可填写端口列表及范围，同组配置归为一个应用
+- **应用配置**：`visitor.FormConfig` 快速创建同组 XTCP / XUDP visitor（可自动派生 STCP / SUDP），其他场景可使用 Manual Config
 - **导入 / 导出**：默认导出保留配置结构并清空已识别的凭据赋值；密码加密备份可安全迁移完整配置
 
 ### 仪表盘
@@ -150,21 +176,21 @@ fallbackTo = "cachyos-stcp-ssh"
 fallbackTimeoutMs = 3000
 ```
 
-### TCP / UDP 多端口（Form Config）
+### 同组多协议与多端口（visitor.FormConfig）
 
-本地端口和远程端口都可填写逗号列表或闭区间，例如本地
-`22,8000-8002` 与远程 `10022,9000-9002` 会按顺序生成 4 条代理。
-两侧展开后的端口数量必须一致，每个 Form 配置最多 128 组映射。
+`Basic Information` 中的 `Group Name` 保持独立；留空时采用公共 `Name`。在下面的
+组级表单中，`Name`、`Server Name`、`Bind Address` 和 `Secret Key` 均只填写一次。
+通过协议下拉框与 `+` 分别添加 XTCP、XUDP 后，每个协议会显示自己的
+`Bind Port(s)` 输入框，支持逗号列表和闭区间（如 `39001,39100-39102`），每个协议
+最多展开 128 个端口。
 
-### 同组多协议（Form Config）
-
-`Basic Information` 中的 `Group Name` 对单协议和多协议配置始终可用；留空时会
-自动采用主协议名称。单协议配置也会保存并使用该名称作为应用展示名称。
-在协议下拉框中切换到新的协议后，前一个成员的表单内容会保留在协议标签中；
-切回标签可继续编辑，也可移除不需要保存的成员。点击协议下拉框右侧的 `+` 可添加
-另一个相同协议成员；重复协议会以 `TCP 1`、`TCP 2` 等编号区分。保存两个或更多
-成员时，应用会将每个成员保存为独立配置，并使用相同的组名和组 ID 在配置列表与
-仪表盘中统一展示。
+生成名称时始终追加协议后缀，例如 `Application-Name` 生成
+`Application-Name-xtcp`。当同一协议填写多个端口时，`name` 与 `serverName` 还会追加
+对应端口号，例如 `Application-Name-xtcp-39001`。开启 `Fallback` 后不再填写额外回落
+字段：应用直接从每条 XTCP / XUDP 配置派生对应的 STCP / SUDP 配置。
+`Derive Peer Config` 按钮位于配置详情上方；生成的每条对端 proxy 默认使用对应 visitor
+填写的 `Bind Port` 作为 `localPort`，Fallback proxy 复用其主协议端口。请按对端真实服务
+监听端口修改该值。
 
 ### 对端配置（被访问设备 frpc）
 ```toml
@@ -172,7 +198,7 @@ fallbackTimeoutMs = 3000
 name = "xtcp_ssh"
 type = "xtcp"
 localIP = "192.168.1.18"
-localPort = 22
+localPort = 39522 # 默认匹配 visitor bindPort，可按实际服务端口修改
 secretKey = "your_secret_key"
 ```
 
