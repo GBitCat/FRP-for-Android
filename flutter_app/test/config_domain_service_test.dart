@@ -177,6 +177,31 @@ void main() {
     );
   });
 
+  test('fallback names preserve generated multi-port suffixes', () {
+    expect(
+      ConfigDomainService.fallbackNameFor(
+        'MuMuDev-ADB-xtcp-39001',
+        protocol: 'xtcp',
+      ),
+      'MuMuDev-ADB-stcp-39001',
+    );
+    expect(
+      ConfigDomainService.fallbackNameFor(
+        'MuMuDev-ADB-xudp-39002',
+        protocol: 'xudp',
+      ),
+      'MuMuDev-ADB-sudp-39002',
+    );
+    expect(
+      ConfigDomainService.fallbackServerNameFor(
+        'service-xtcp-label-xtcp-39001',
+        protocol: 'xtcp',
+        fallbackProtocol: 'stcp',
+      ),
+      'service-xtcp-label-stcp-39001',
+    );
+  });
+
   test('effective XTCP naming is idempotent', () {
     expect(
       ConfigDomainService.effectiveName(

@@ -59,11 +59,15 @@ class ConfigDomainService {
   static String fallbackNameFor(String name, {required String protocol}) {
     final primaryProtocol = protocol.toLowerCase();
     final fallbackProtocol = fallbackProtocolFor(primaryProtocol) ?? 'stcp';
-    final suffix = '-$primaryProtocol';
-    final base = name.toLowerCase().endsWith(suffix)
-        ? name.substring(0, name.length - suffix.length)
-        : name;
-    return '$base-$fallbackProtocol';
+    final generatedSuffix = RegExp(
+      '-${RegExp.escape(primaryProtocol)}(-\\d+)?\$',
+      caseSensitive: false,
+    ).firstMatch(name);
+    if (generatedSuffix == null) return '$name-$fallbackProtocol';
+
+    final base = name.substring(0, generatedSuffix.start);
+    final portSuffix = generatedSuffix.group(1) ?? '';
+    return '$base-$fallbackProtocol$portSuffix';
   }
 
   static String fallbackServerNameFor(
@@ -72,11 +76,15 @@ class ConfigDomainService {
     required String fallbackProtocol,
   }) {
     if (serverName.isEmpty) return '';
-    final pattern = RegExp(RegExp.escape(protocol), caseSensitive: false);
-    if (pattern.hasMatch(serverName)) {
-      return serverName.replaceAll(pattern, fallbackProtocol);
-    }
-    return '$serverName-$fallbackProtocol';
+    final generatedSuffix = RegExp(
+      '-${RegExp.escape(protocol)}(-\\d+)?\$',
+      caseSensitive: false,
+    ).firstMatch(serverName);
+    if (generatedSuffix == null) return '$serverName-$fallbackProtocol';
+
+    final base = serverName.substring(0, generatedSuffix.start);
+    final portSuffix = generatedSuffix.group(1) ?? '';
+    return '$base-$fallbackProtocol$portSuffix';
   }
 
   static int defaultFallbackBindPortFor(FrpConfig primary) {

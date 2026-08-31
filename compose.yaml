@@ -1,0 +1,65 @@
+name: frpc-android
+
+x-dev-image: &dev-image
+  image: frp-for-android-dev:ubuntu-26.04
+  build:
+    context: .
+    args:
+      HTTP_PROXY: ${HTTP_PROXY:-http://127.0.0.1:8118}
+      HTTPS_PROXY: ${HTTPS_PROXY:-http://127.0.0.1:8118}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1},10.0.0.1
+
+x-dev-volumes: &dev-volumes
+  - .:/workspace
+  - pub-cache:/cache/pub
+  - gradle-cache:/cache/gradle
+  - dev-home:/cache/home
+
+services:
+  cache-init:
+    <<: *dev-image
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        chown -R ${LOCAL_UID:-1000}:${LOCAL_GID:-1000}
+        /cache/pub /cache/gradle /cache/home
+    volumes: *dev-volumes
+    restart: "no"
+
+  dev:
+    <<: *dev-image
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace/flutter_app
+    network_mode: host
+    init: true
+    stdin_open: true
+    tty: true
+    depends_on:
+      cache-init:
+        condition: service_completed_successfully
+    environment:
+      HOME: /cache/home
+      ANDROID_USER_HOME: /cache/home/.android
+      PUB_CACHE: /cache/pub
+      GRADLE_USER_HOME: /cache/gradle
+      HTTP_PROXY: ${HTTP_PROXY:-http://127.0.0.1:8118}
+      HTTPS_PROXY: ${HTTPS_PROXY:-http://127.0.0.1:8118}
+      http_proxy: ${HTTP_PROXY:-http://127.0.0.1:8118}
+      https_proxy: ${HTTPS_PROXY:-http://127.0.0.1:8118}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1},10.0.0.1
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1},10.0.0.1
+      GRADLE_OPTS: >-
+        -Dorg.gradle.wrapper.networkTimeout=120000
+        -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=8118
+        -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8118
+    volumes: *dev-volumes
+
+volumes:
+  pub-cache:
+    name: frpc-android-pub-cache
+  gradle-cache:
+    name: frpc-android-gradle-cache
+  dev-home:
+    name: frpc-android-dev-home
