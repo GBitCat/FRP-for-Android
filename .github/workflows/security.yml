@@ -38,4 +38,5 @@ jobs:
           chmod 755 "$RUNNER_TEMP/gitleaks"
 
       - name: Scan Git history for secrets
-        run: "$RUNNER_TEMP/gitleaks" git . --redact=100 --no-banner --no-color
+        run: |
+          "$RUNNER_TEMP/gitleaks" git . --redact=100 --no-banner --no-color
