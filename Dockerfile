@@ -5,6 +5,13 @@ FROM ubuntu:26.04
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG NO_PROXY
+ARG ANDROID_GRADLE_PLUGIN_VERSION=9.3.1
+ARG GRADLE_VERSION=9.7.0
+ARG KOTLIN_VERSION=2.4.10
+
+LABEL dev.gbitcat.frp-for-android.agp="${ANDROID_GRADLE_PLUGIN_VERSION}" \
+      dev.gbitcat.frp-for-android.gradle="${GRADLE_VERSION}" \
+      dev.gbitcat.frp-for-android.kotlin="${KOTLIN_VERSION}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -38,9 +45,12 @@ RUN curl -fsSL "https://storage.googleapis.com/flutter_infra_release/releases/st
     && flutter --version
 
 ARG CMDLINE_TOOLS_VERSION=13114758
+ARG ANDROID_COMPAT_PLATFORM=35
 ARG ANDROID_PLATFORM=36
+ARG ANDROID_COMPAT_BUILD_TOOLS=35.0.0
 ARG ANDROID_BUILD_TOOLS=36.0.0
 ARG ANDROID_NDK=28.2.13676358
+ARG ANDROID_CMAKE=3.22.1
 RUN curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" -o /tmp/cmdline-tools.zip \
     && mkdir -p "${ANDROID_HOME}/cmdline-tools" \
     && unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools \
@@ -49,9 +59,12 @@ RUN curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-
     && yes | sdkmanager --licenses > /dev/null \
     && sdkmanager --install \
         "platform-tools" \
+        "platforms;android-${ANDROID_COMPAT_PLATFORM}" \
         "platforms;android-${ANDROID_PLATFORM}" \
+        "build-tools;${ANDROID_COMPAT_BUILD_TOOLS}" \
         "build-tools;${ANDROID_BUILD_TOOLS}" \
-        "ndk;${ANDROID_NDK}"
+        "ndk;${ANDROID_NDK}" \
+        "cmake;${ANDROID_CMAKE}"
 
 ARG GO_VERSION=1.25.12
 ENV GOPATH=/go \

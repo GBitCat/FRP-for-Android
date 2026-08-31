@@ -27,8 +27,56 @@ void main() {
     );
     final toml = configBlock(config);
     expect(toml, contains('[[proxies]]'));
+    expect(toml, contains('name = "ssh"'));
     expect(toml, contains('localPort = 22'));
     expect(toml, contains('remotePort = 10022'));
+  });
+
+  test('TCP multi-port config expands into independently named proxies', () {
+    const config = FrpConfig(
+      name: 'services',
+      protocol: 'tcp',
+      localPort: 22,
+      remotePort: 10022,
+      portMappings: [
+        PortMapping(localPort: 22, remotePort: 10022),
+        PortMapping(localPort: 8000, remotePort: 9000),
+        PortMapping(localPort: 8001, remotePort: 9001),
+      ],
+      useEncryption: true,
+    );
+
+    final toml = configBlock(config);
+    expect(
+      RegExp(r'^\[\[proxies\]\]$', multiLine: true).allMatches(toml),
+      hasLength(3),
+    );
+    expect(toml, contains('name = "services-22"'));
+    expect(toml, contains('name = "services-8000"'));
+    expect(toml, contains('name = "services-8001"'));
+    expect(toml, contains('localPort = 8001'));
+    expect(toml, contains('remotePort = 9001'));
+    expect(
+      RegExp(r'^\[proxies\.transport\]$', multiLine: true).allMatches(toml),
+      hasLength(3),
+    );
+  });
+
+  test('HTTP proxy emits custom domains instead of a remote port', () {
+    const config = FrpConfig(
+      name: 'web',
+      protocol: 'http',
+      localPort: 8080,
+      remotePort: 10080,
+      customDomains: ['web.example.com', 'api.example.com'],
+    );
+    final toml = configBlock(config);
+    expect(toml, contains('localPort = 8080'));
+    expect(
+      toml,
+      contains('customDomains = ["web.example.com", "api.example.com"]'),
+    );
+    expect(toml, isNot(contains('remotePort')));
   });
 
   test('XTCP visitor emits fallback and transport settings', () {
@@ -75,6 +123,25 @@ void main() {
     expect(configBlock(visitor), contains('[[visitors]]'));
     expect(configBlock(visitor), contains('serverName = "game"'));
     expect(configBlock(visitor), contains('bindPort = 2000'));
+  });
+
+  test('XUDP visitor emits SUDP fallback settings', () {
+    const visitor = FrpConfig(
+      name: 'game-xudp',
+      protocol: 'xudp',
+      role: 'visitor',
+      serverName: 'game-xudp',
+      bindPort: 2000,
+      secretKey: 'secret',
+      useFallback: true,
+      fallbackTo: 'game-sudp',
+      fallbackTimeoutMs: 2500,
+    );
+
+    final toml = configBlock(visitor);
+    expect(toml, contains('fallbackTo = "game-sudp"'));
+    expect(toml, contains('fallbackTimeoutMs = 2500'));
+    expect(toml, isNot(contains('keepTunnelOpen')));
   });
 
   test('manual TOML is preserved without generated fields', () {

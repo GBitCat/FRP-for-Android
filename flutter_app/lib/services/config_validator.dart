@@ -5,12 +5,50 @@ class ConfigValidator {
 
   static String? validate(FrpConfig config) {
     if (config.name.trim().isEmpty) return 'Name is required';
+    final protocol = config.protocol.toLowerCase();
+    if (config.supportsMultiplePorts()) {
+      final mappings = config.effectivePortMappings;
+      if (mappings.length > FrpConfig.maxPortMappings) {
+        return 'At most 128 port mappings are allowed';
+      }
+      for (final mapping in mappings) {
+        if (mapping.localPort <= 0 || mapping.localPort > 65535) {
+          return 'Local port must be between 1 and 65535';
+        }
+        if (mapping.remotePort <= 0 || mapping.remotePort > 65535) {
+          return 'Remote port must be between 1 and 65535';
+        }
+      }
+      if (mappings.map((mapping) => mapping.localPort).toSet().length !=
+          mappings.length) {
+        return 'Local ports must not contain duplicates';
+      }
+      if (mappings.map((mapping) => mapping.remotePort).toSet().length !=
+          mappings.length) {
+        return 'Remote ports must not contain duplicates';
+      }
+      return null;
+    }
+    if (protocol == 'http' || protocol == 'https') {
+      if (config.localPort <= 0 || config.localPort > 65535) {
+        return 'Local port must be between 1 and 65535';
+      }
+      if (!config.customDomains.any((domain) => domain.trim().isNotEmpty)) {
+        return 'At least one custom domain is required';
+      }
+      return null;
+    }
     if (config.needsSecretKey()) {
       if ((config.secretKey ?? '').trim().isEmpty) {
         return 'Secret key is required for ${config.protocol.toUpperCase()}';
       }
       if (config.isVisitor() && (config.serverName ?? '').trim().isEmpty) {
         return 'Server name is required for visitor';
+      }
+      if (config.isVisitor() &&
+          (protocol == 'sudp' || protocol == 'xudp') &&
+          config.bindPort <= 0) {
+        return 'Bind port must be between 1 and 65535 for ${protocol.toUpperCase()}';
       }
       if (config.isVisitor() && config.bindPort <= 0 && config.bindPort != -1) {
         return 'Bind port must be -1 or between 1 and 65535';

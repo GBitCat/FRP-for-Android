@@ -84,10 +84,10 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<void> _exportConfig(BuildContext context) async {
-    if (appState.configs.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('No configs to export')));
+    if (appState.configs.isEmpty && appState.servers.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No configuration to export')),
+      );
       return;
     }
     final mode = await showDialog<_ExportMode>(
@@ -95,7 +95,8 @@ class SettingsScreen extends StatelessWidget {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Export configuration'),
         content: const Text(
-          'Redacted export omits tokens, secret keys and manual TOML. '
+          'Redacted export clears recognized credential assignments while preserving '
+          'manual TOML structure. Review custom fields before sharing. '
           'Use an encrypted backup when credentials must be portable.',
         ),
         actions: [
@@ -161,7 +162,7 @@ class SettingsScreen extends StatelessWidget {
             saved != null
                 ? encrypted
                       ? 'Exported password-encrypted backup'
-                      : 'Exported redacted backup without credentials'
+                      : 'Exported backup with recognized credentials cleared'
                 : 'Export cancelled',
           ),
         ),
@@ -396,7 +397,7 @@ class SettingsScreen extends StatelessWidget {
                           leading: const Icon(Icons.file_download_outlined),
                           title: const Text('Export Config'),
                           subtitle: const Text(
-                            'Redacted by default; encrypted export can include credentials',
+                            'Redacted export preserves structure; encrypted export includes credentials',
                           ),
                           onTap: () => _exportConfig(context),
                         ),
