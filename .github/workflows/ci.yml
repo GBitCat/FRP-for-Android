@@ -162,11 +162,27 @@ jobs:
 
           cleanup() {
             rc=$?
+            trap - EXIT
+            set +e
             if (( rc != 0 )); then
               tail -n 200 "$emulator_log" || true
             fi
-            "$adb" -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
+
+            # ADB or the emulator can occasionally stop responding after a
+            # successful instrumentation run. Keep teardown bounded so a
+            # cleanup hang cannot turn passing tests into a step timeout.
+            timeout --signal=TERM --kill-after=2s 8s \
+              "$adb" -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
             kill "$emulator_pid" >/dev/null 2>&1 || true
+            for _ in $(seq 1 50); do
+              if ! kill -0 "$emulator_pid" 2>/dev/null; then
+                break
+              fi
+              sleep 0.2
+            done
+            if kill -0 "$emulator_pid" 2>/dev/null; then
+              kill -KILL "$emulator_pid" >/dev/null 2>&1 || true
+            fi
             wait "$emulator_pid" 2>/dev/null || true
             exit "$rc"
           }
