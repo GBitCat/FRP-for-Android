@@ -206,7 +206,15 @@ class FrpcServiceIntegrationTest {
         FrpcService.stop(context)
         waitUntil { FrpcService.instance == null }
         assertTrue(FrpcService.start(context, configText()))
-        assertTrue(waitUntil { FrpcService.instance?.isFrpcRunning() == true })
+        // isFrpcRunning() becomes true as soon as ProcessBuilder returns,
+        // before the start worker has committed the recoverable run intent.
+        // The fixture's first output is consumed only after that commit and
+        // deletes the runtime config, so this is the readiness barrier needed
+        // before testing that STOP cleanup remains queued behind the hook.
+        assertTrue(waitUntil {
+            FrpcService.instance?.isFrpcRunning() == true &&
+                !FrpcService.runtimeConfigFile(context).exists()
+        })
         val service = requireNotNull(FrpcService.instance)
         val workerEntered = CountDownLatch(1)
         val releaseWorker = CountDownLatch(1)
