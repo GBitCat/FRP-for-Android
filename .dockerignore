@@ -22,6 +22,10 @@ downloads
 **/*.PFX
 **/*.pem
 **/*.PEM
+**/*.crt
+**/*.CRT
+**/*.csr
+**/*.CSR
 **/*.key
 **/*.KEY
 **/*.pk8
@@ -32,6 +36,10 @@ downloads
 **/google-services.json
 **/*.frpbackup
 **/*.FRPBACKUP
+**/*.frpca
+**/*.FRPCA
+**/*.frptls
+**/*.FRPTLS
 **/*backup*.zip
 **/*password*.txt
 **/screenshot*.png

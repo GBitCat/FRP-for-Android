@@ -7,6 +7,7 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -15,6 +16,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PersistableBundle
 import android.provider.Settings
+import android.system.Os
+import android.system.OsConstants
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -23,6 +26,43 @@ import java.io.File
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.NetworkInterface
+import java.util.Arrays
+import java.util.Collections
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
+
+/** Runs or cancels an owned secure operation while invoking cleanup exactly once. */
+internal class CancellableSecureTask(
+    private val operation: () -> Unit,
+    private val cleanup: () -> Unit,
+) : Runnable {
+    private val claimed = AtomicBoolean(false)
+
+    override fun run() {
+        if (!claimed.compareAndSet(false, true)) return
+        try {
+            operation()
+        } finally {
+            cleanup()
+        }
+    }
+
+    internal fun cancelBeforeRun(): Boolean {
+        if (!claimed.compareAndSet(false, true)) return false
+        cleanup()
+        return true
+    }
+}
+
+internal fun cancelQueuedSecureTasks(tasks: List<Runnable>): Int =
+    tasks.filterIsInstance<CancellableSecureTask>().count { it.cancelBeforeRun() }
+
+object ScreenCapturePolicy {
+    fun shouldProtect(applicationFlags: Int): Boolean =
+        (applicationFlags and ApplicationInfo.FLAG_DEBUGGABLE) == 0
+}
 
 /**
  * 主界面：MethodChannel 桥接 Dart 与 FrpcService。
@@ -33,16 +73,24 @@ class MainActivity : FlutterActivity() {
 
     private var channel: MethodChannel? = null
     private var secureChannel: MethodChannel? = null
+    private var documentIoBridge: DocumentIoBridge? = null
     private val clipboardHandler = Handler(Looper.getMainLooper())
+    private val secureExecutor: ExecutorService = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "frp-secure-bridge").apply { isDaemon = true }
+    }
+    private val secureResults = Collections.synchronizedSet(mutableSetOf<MainThreadResult>())
     private var sensitiveClipSequence = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        if (ScreenCapturePolicy.shouldProtect(applicationInfo.flags)) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        documentIoBridge = DocumentIoBridge(this, flutterEngine.dartExecutor.binaryMessenger)
         channel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "com.frp.app/engine"
@@ -54,13 +102,42 @@ class MainActivity : FlutterActivity() {
                         result.success(FrpcService.start(this, configContent))
                     }
                     "stop" -> {
-                        FrpcService.stop(this)
-                        result.success(true)
+                        result.success(FrpcService.stop(this))
                     }
+                    "isRunRequested" -> result.success(FrpcService.isRunRequested(this))
                     "getInitialTab" -> result.success(intent?.getIntExtra("initial_tab", -1) ?: -1)
+                    "getTlsStorageRoot" -> {
+                        try {
+                            val directory = File(noBackupFilesDir, "tls")
+                            check(directory.exists() || directory.mkdirs()) {
+                                "unable to create certificate storage"
+                            }
+                            check(
+                                directory.isDirectory &&
+                                    !OsConstants.S_ISLNK(Os.lstat(directory.path).st_mode),
+                            ) {
+                                "certificate storage is unsafe"
+                            }
+                            result.success(directory.canonicalPath)
+                        } catch (error: Exception) {
+                            result.error(
+                                "TLS_STORAGE_UNAVAILABLE",
+                                error.message ?: "certificate storage is unavailable",
+                                null,
+                            )
+                        }
+                    }
                     "setExcludeFromRecents" -> {
-                        applyExcludeFromRecents(call.argument<Boolean>("exclude") ?: false)
-                        result.success(true)
+                        try {
+                            applyExcludeFromRecents(call.argument<Boolean>("exclude") ?: false)
+                            result.success(true)
+                        } catch (_: Exception) {
+                            result.error(
+                                "RECENTS_UPDATE_FAILED",
+                                "Unable to update recent-app visibility",
+                                null,
+                            )
+                        }
                     }
                     "getVersionName" -> result.success(
                         try {
@@ -91,24 +168,22 @@ class MainActivity : FlutterActivity() {
             ch.setMethodCallHandler { call, result ->
                 try {
                     when (call.method) {
-                        "encrypt" -> result.success(
-                            SecureStringCodec.encrypt(requireNotNull(call.argument("value")))
-                        )
-                        "decrypt" -> result.success(
-                            SecureStringCodec.decrypt(requireNotNull(call.argument("value")))
-                        )
-                        "encryptBackup" -> result.success(
-                            BackupCipher.encrypt(
-                                requireNotNull(call.argument<ByteArray>("data")),
-                                requireNotNull(call.argument<String>("password")),
+                        "encrypt" -> submitSecureOperation(result) {
+                            SecureStringCodec.encrypt(
+                                requireNotNull(call.argument<String>("value")),
                             )
-                        )
-                        "decryptBackup" -> result.success(
-                            BackupCipher.decrypt(
-                                requireNotNull(call.argument<ByteArray>("data")),
-                                requireNotNull(call.argument<String>("password")),
+                        }
+                        "decrypt" -> submitSecureOperation(result) {
+                            SecureStringCodec.decrypt(
+                                requireNotNull(call.argument<String>("value")),
                             )
-                        )
+                        }
+                        "encryptBackup" -> submitBackupOperation(call, result) { data, password ->
+                            BackupCipher.encrypt(data, password)
+                        }
+                        "decryptBackup" -> submitBackupOperation(call, result) { data, password ->
+                            BackupCipher.decrypt(data, password)
+                        }
                         "copySensitiveText" -> {
                             copySensitiveText(requireNotNull(call.argument("value")))
                             result.success(null)
@@ -146,10 +221,27 @@ class MainActivity : FlutterActivity() {
         // 不停 frpc：进程由 FrpcService 托管，Activity 销毁不影响后台连接
         FrpcService.channel = null
         secureChannel?.setMethodCallHandler(null)
+        cancelQueuedSecureTasks(secureExecutor.shutdownNow())
+        val resultsToCancel = synchronized(secureResults) { secureResults.toList() }
+        resultsToCancel.forEach {
+            it.error(
+                "SECURE_STORAGE_CANCELLED",
+                "Activity closed before the secure operation completed",
+            )
+        }
+        documentIoBridge?.close()
+        documentIoBridge = null
         super.onDestroy()
     }
 
+    @Deprecated("Deprecated in Android API; required for Storage Access Framework results")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (documentIoBridge?.onActivityResult(requestCode, resultCode, data) == true) return
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     /** 引导用户取消本应用的电池优化/省电策略 */
+    @android.annotation.SuppressLint("BatteryLife", "UseKtx")
     private fun requestIgnoreBatteryOptimizations() {
         try {
             val intent = Intent(
@@ -169,20 +261,24 @@ class MainActivity : FlutterActivity() {
 
     /** 隐藏/恢复「最近任务」卡片 */
     private fun applyExcludeFromRecents(exclude: Boolean) {
-        try {
-            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            for (task in am.appTasks) {
-                task.setExcludeFromRecents(exclude)
-            }
-        } catch (e: Exception) {
-            // ignore
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        for (task in am.appTasks) {
+            task.setExcludeFromRecents(exclude)
         }
     }
 
     /** Marks credentials as sensitive and removes them from the clipboard after 60 seconds. */
     private fun copySensitiveText(value: String) {
-        require(value.toByteArray(Charsets.UTF_8).size <= 2 * 1024 * 1024) {
+        require(value.length <= 2 * 1024 * 1024) {
             "Clipboard content exceeds the 2 MiB limit"
+        }
+        val valueBytes = value.toByteArray(Charsets.UTF_8)
+        try {
+            require(valueBytes.size <= 2 * 1024 * 1024) {
+                "Clipboard content exceeds the 2 MiB limit"
+            }
+        } finally {
+            Arrays.fill(valueBytes, 0)
         }
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val sequence = ++sensitiveClipSequence
@@ -205,6 +301,64 @@ class MainActivity : FlutterActivity() {
                 clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
             }
         }, 60_000)
+    }
+
+    private fun submitSecureOperation(
+        result: MethodChannel.Result,
+        ownedByteArrays: List<ByteArray> = emptyList(),
+        operation: () -> Any?,
+    ) {
+        lateinit var completion: MainThreadResult
+        completion = MainThreadResult(result) { secureResults.remove(completion) }
+        secureResults.add(completion)
+        val task = CancellableSecureTask(
+            operation = {
+                try {
+                    val value = operation()
+                    completion.success(value) {
+                        if (value is ByteArray) Arrays.fill(value, 0)
+                    }
+                } catch (error: IllegalArgumentException) {
+                    completion.error("INVALID_ARGUMENT", error.message)
+                } catch (error: Exception) {
+                    completion.error("SECURE_STORAGE_ERROR", error.message)
+                }
+            },
+            cleanup = {
+                ownedByteArrays.forEach { bytes -> Arrays.fill(bytes, 0) }
+            },
+        )
+        try {
+            secureExecutor.execute(task)
+        } catch (_: RejectedExecutionException) {
+            task.cancelBeforeRun()
+            completion.error(
+                "SECURE_STORAGE_CANCELLED",
+                "Activity is no longer available",
+            )
+        }
+    }
+
+    private fun submitBackupOperation(
+        call: io.flutter.plugin.common.MethodCall,
+        result: MethodChannel.Result,
+        operation: (ByteArray, String) -> ByteArray,
+    ) {
+        val data = requireNotNull(call.argument<ByteArray>("data"))
+        var ownershipTransferred = false
+        try {
+            val password = requireNotNull(call.argument<String>("password"))
+            // MethodChannel supplies an immutable JVM String. It cannot be
+            // wiped in place, so bound it before queueing and avoid making
+            // additional password copies; it becomes GC-eligible afterward.
+            BackupCipher.validatePassword(password)
+            submitSecureOperation(result, ownedByteArrays = listOf(data)) {
+                operation(data, password)
+            }
+            ownershipTransferred = true
+        } finally {
+            if (!ownershipTransferred) Arrays.fill(data, 0)
+        }
     }
 
     private fun getIpv4(): String? {
@@ -245,13 +399,6 @@ class MainActivity : FlutterActivity() {
 
     /// 服务未启动时的兜底：仅 Flutter 进程 RSS
     private fun getFallbackMemoryMb(): Double {
-        return try {
-            val statm = File("/proc/${android.os.Process.myPid()}/statm")
-                .readText().trim().split(Regex("\\s+"))
-            val residentPages = statm.getOrNull(1)?.toLongOrNull() ?: 0L
-            residentPages * 4096.0 / 1024.0 / 1024.0
-        } catch (e: Exception) {
-            0.0
-        }
+        return ProcessMemory.rssMb(android.os.Process.myPid())
     }
 }

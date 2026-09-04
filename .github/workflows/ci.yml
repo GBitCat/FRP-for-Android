@@ -1,6 +1,7 @@
-name: Flutter PR Gate
+name: Native and Flutter PR Gate
 
 on:
+  workflow_call:
   pull_request:
   push:
     branches: [main, beta]
@@ -10,26 +11,77 @@ permissions:
   contents: read
 
 concurrency:
-  group: flutter-ci-${{ github.ref }}
+  group: app-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   quality-and-release-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: flutter_app
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "21"
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.8"
+          cache-dependency-path: native/frpc_cert/go.mod
+
       - name: Set up Flutter
         uses: ./.github/actions/setup-flutter
+
+      - name: Install pinned Android NDK
+        working-directory: .
+        run: sdkmanager --install "ndk;28.2.13676358"
+
+      - name: Check tracked sensitive filenames
+        working-directory: .
+        run: ./scripts/security_check.sh --tracked
+
+      - name: Format and test Go certificate engine
+        working-directory: native/frpc_cert
+        run: |
+          test -z "$(gofmt -l .)"
+          go test -race ./...
+          go vet ./...
+
+      - name: Rebuild and verify embedded frpc
+        working-directory: .
+        run: ./scripts/build_frpc_android.sh --check
+
+      - name: Audit Go vulnerability reachability
+        working-directory: .
+        run: ./scripts/audit_go_vulnerabilities.sh
+
+      - name: Build Linux certificate bundle tool
+        working-directory: .
+        run: ./scripts/build_frpc_cert_tool.sh
+
+      - name: Rebuild and verify Android certificate engine
+        working-directory: .
+        run: ./scripts/build_frpc_cert_android.sh --check
+
+      - name: Test release native hash pin guard
+        working-directory: .
+        run: ./scripts/test_release_native_hashes.sh
+
+      - name: Test release tag guard
+        working-directory: .
+        run: ./scripts/test_release_tag_guard.sh
+
+      - name: Run real frpc/frps mutual TLS end-to-end test
+        working-directory: .
+        run: ./scripts/test_mtls_e2e.sh
 
       - name: Resolve dependencies
         run: flutter pub get
@@ -43,10 +95,38 @@ jobs:
       - name: Test
         run: flutter test
 
-      - name: Compile Android integration tests
-        run: ./android/gradlew -p android app:assembleDebugAndroidTest --no-daemon
+      - name: Android lint
+        run: ./android/gradlew -p android app:lintDebug --no-daemon
 
-      - name: Build unsigned Release APK
+      - name: Build x86_64 frpc lifecycle test fixture
+        working-directory: .
+        run: ./scripts/build_frpc_test_stub_android.sh
+
+      - name: Compile Android integration tests
+        run: >-
+          ./android/gradlew -p android app:assembleDebugAndroidTest
+          -Pfrp.integrationTestAbi=x86_64 --no-daemon
+
+      - name: Run Android integration tests on API 35
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: >-
+            -no-snapshot-load -no-snapshot-save -no-window
+            -gpu swiftshader_indirect -noaudio -no-boot-anim
+            -camera-back none -camera-front none
+          script: |
+            ./scripts/build_frpc_test_stub_android.sh
+            ./flutter_app/android/gradlew -p flutter_app/android connectedDebugAndroidTest \
+              -Pfrp.integrationTestAbi=x86_64 --no-daemon
+
+      - name: Build unsigned API 28+ Release APK
+        env:
+          FRP_RELEASE_MIN_SDK: '28'
         run: flutter build apk --release --target-platform android-arm64
 
       - name: Upload Release APK
@@ -54,3 +134,9 @@ jobs:
         with:
           name: frp-android-unsigned-release
           path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload Linux certificate bundle tool
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: frpc-cert-tool-linux-amd64
+          path: build/tools/linux-amd64/frpc-cert-tool

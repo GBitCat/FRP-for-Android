@@ -31,6 +31,13 @@
 - ✅ **对端配置推导**：一键生成对端 frpc 配置并复制，`localPort` 默认匹配 visitor 端口
 - ✅ **导入 / 导出**：默认脱敏 zip 保留配置结构、清空已识别的凭据赋值并移除 Manual TOML 注释（分享前仍需检查自定义字段值）；需要迁移凭据时使用密码加密备份
 
+### 双向 TLS 与证书管理
+- ✅ **设备证书**：私钥只在 Android 应用私有目录生成，支持导出 CSR、安装签发后的客户端证书与可信服务端 CA
+- ✅ **CA 独立管理**：CA 与设备证书分区展示；CA 私钥使用密码加密保存，可为本机身份或其他设备提交的 CSR 签发证书
+- ✅ **frps 证书**：高级本地部署模式可生成带 DNS / IP SAN 的服务端证书和私钥，并导出密码加密的部署包
+- ✅ **安全恢复**：CA 可导出双层密码保护的恢复包，恢复后可以继续为新设备签发证书
+- ✅ **Server Config 联动**：Server Config 只保存设备身份 ID，启动时从证书库重新解析 Bidirectional Verification 私有路径
+
 ### 仪表盘
 - ✅ **Server 卡片**：一键开关、连接状态（Active / 未启动）、连接方式（P2P / 中继）
 - ✅ **网络与内存**：IPv4 / IPv6、App + frpc 真实 RSS 占用（按设备总内存显示 RAM %）
@@ -46,7 +53,7 @@
 - ✅ **玻璃 / 折射风格 UI**：透明玻璃导航栏、毛玻璃弹窗
 - ✅ **主题**：浅色 / 深色 / 跟随系统 + 7 种主题色，持久化保存
 - ✅ **日志查看**：frpc 运行日志实时查看
-- ✅ **敏感信息保护**：全局禁止系统截图/录屏；Token 与 Secret Key 默认隐藏；配置与日志剪贴板 60 秒自动清理
+- ✅ **敏感信息保护**：Release 版禁止系统截图/录屏（Debug 版便于测试而允许捕获）；Token 与 Secret Key 默认隐藏；配置与日志剪贴板 60 秒自动清理
 
 ## 🚀 快速开始
 
@@ -60,8 +67,9 @@
 ## 🛠️ 开发环境
 
 - Flutter 3.x（stable）
+- Go 1.26.8 (the native build scripts require this exact version)
 - JDK 21
-- Android SDK
+- Android SDK + NDK r28c
 - Git
 
 ### Docker 开发环境（持久缓存）
@@ -76,7 +84,7 @@ CPU / 内存占用；Android debug keystore 也保存在开发 HOME 卷中，因
 ./scripts/install-hooks.sh
 ./docker-dev.sh flutter pub get
 ./docker-dev.sh flutter test
-./docker-dev.sh flutter build apk --debug
+./docker-dev.sh /workspace/scripts/build.sh
 ```
 
 默认通过宿主机 `127.0.0.1:8118` 代理下载依赖；可通过 `HTTP_PROXY`、
@@ -91,7 +99,7 @@ CPU / 内存占用；Android debug keystore 也保存在开发 HOME 卷中，因
 git clone https://github.com/GBitCat/FRP-for-Android.git
 cd FRP-for-Android
 ./scripts/install-hooks.sh
-./docker-dev.sh flutter pub get
+./docker-dev.sh /workspace/scripts/build_frpc_cert_android.sh
 ./docker-dev.sh flutter build apk --release
 # 输出：flutter_app/build/app/outputs/flutter-apk/app-release.apk
 ```
@@ -125,10 +133,11 @@ FRP-for-Android/
 │   │   │   ├── config_import_export.dart # ZIP / JSON 导入导出
 │   │   │   ├── backup_crypto.dart    # 密码加密备份桥接
 │   │   │   ├── sensitive_file_cache.dart # 敏感临时文件定向清理
-│   │   │   └── secure_clipboard.dart # 敏感剪贴板与定时清理桥接
+│   │   │   ├── secure_clipboard.dart # 敏感剪贴板与定时清理桥接
+│   │   │   └── certificates/          # Dart FFI 桥接与证书数据模型
 │   │   ├── state/
 │   │   │   └── app_state.dart        # 全局状态
-│   │   ├── screens/                  # 仪表盘 / 配置 / 设置 / 编辑 / 日志
+│   │   ├── screens/                  # 仪表盘 / 配置 / 证书管理 / 设置 / 编辑 / 日志
 │   │   └── widgets/                  # 玻璃导航栏 / 毛玻璃弹窗 / 卡片
 │   ├── android/app/src/main/
 │   │   ├── kotlin/com/frp/frp_app/
@@ -137,8 +146,11 @@ FRP-for-Android/
 │   │   │   ├── BootReceiver.kt       # 开机自启
 │   │   │   ├── SecureStringCodec.kt  # Android Keystore 配置加密
 │   │   │   └── BackupCipher.kt       # PBKDF2 + AES-256-GCM 备份加密
-│   │   └── jniLibs/arm64-v8a/libfrpc.so
+│   │   └── jniLibs/arm64-v8a/
+│   │       ├── libfrpc.so            # frpc ARM64 可执行核心
+│   │       └── libfrpc_cert.so       # Go c-shared 证书引擎
 │   └── pubspec.yaml
+├── native/frpc_cert/                 # CA / CSR / X.509 签发与私有文件存储
 ├── docker-dev.sh / compose.yaml      # 持久缓存 Docker 开发环境
 └── scripts/                          # 构建、测试与部署脚本
 ```
@@ -149,6 +161,11 @@ FRP-for-Android/
 - **Server**：管理多个 frps 服务器连接；可命名、编辑、预览拼接配置、切换当前 Server
 - **应用配置**：`visitor.FormConfig` 快速创建同组 XTCP / XUDP visitor（可自动派生 STCP / SUDP），其他场景可使用 Manual Config
 - **导入 / 导出**：默认导出保留配置结构并清空已识别的凭据赋值；密码加密备份可安全迁移完整配置
+
+### 证书管理区
+- **Certificates**：生成本机私钥与 CSR，安装客户端证书和可信服务端 CA，并应用到 Server Config
+- **Authorities**：创建或恢复 CA、签发外部 CSR、生成 frps 服务端证书；CA 私钥不会以明文落盘
+- **跨设备签发**：其他设备在本地保留私钥并提交 CSR，本应用只返回签发证书；无需传输对方私钥
 
 ### 仪表盘
 - **Server 卡片**：开关启动 / 停止，显示 Active / 未启动与连接方式
@@ -218,8 +235,9 @@ secretKey = "your_secret_key"
 4. **XUDP 全链路版本**：`frps`、XUDP proxy 端 `frpc`、XUDP visitor 端 `frpc` 必须全部使用兼容的 `GBitCat/frp-xudp`，推荐统一为当前内置的 `v0.71.0-v2`；不能只在 Android 端替换，也不要与官方 FRP 或其他 fork 混用
 5. **后台驻留**：为保证长时间稳定连接，请允许通知权限、取消电池优化（应用内首次启动会引导跳转），部分国产 ROM 还需在系统设置中允许后台运行
 6. **内存显示**：卡片显示的是 App 与 frpc 进程的 RSS 占用，按设备总内存计算百分比
-7. **敏感画面**：应用默认启用 Android `FLAG_SECURE`，系统截图、录屏与最近任务缩略图会被阻止或隐藏
+7. **敏感画面**：Release 版启用 Android `FLAG_SECURE`，系统截图、录屏与最近任务缩略图会被阻止或隐藏；Debug 版明确不启用，便于开发测试
 8. **旧版签名限制**：Android 8.1 及更早版本不支持当前 APK 使用的 v3 密钥轮换；只从官方 Releases 安装并核对 SHA-256
+9. **CA 恢复**：删除 CA 前先导出恢复包并妥善保存两层密码；当前版本不提供在线 CA、证书吊销列表或自动轮换
 
 ## 🤝 贡献
 

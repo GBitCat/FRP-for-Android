@@ -10,8 +10,8 @@ class PortMapping {
   };
 
   factory PortMapping.fromJson(Map<String, dynamic> json) => PortMapping(
-    localPort: (json['localPort'] as num?)?.toInt() ?? 0,
-    remotePort: (json['remotePort'] as num?)?.toInt() ?? 0,
+    localPort: _jsonInt(json, 'localPort', 0),
+    remotePort: _jsonInt(json, 'remotePort', 0),
   );
 
   @override
@@ -134,6 +134,7 @@ class FrpConfig {
   ];
   static const List<String> secretProtocols = ['stcp', 'sudp', 'xtcp', 'xudp'];
   static const int maxPortMappings = 128;
+  static const int maxCustomDomains = 128;
 
   bool needsSecretKey() => secretProtocols.contains(protocol.toLowerCase());
   bool isVisitor() => role == 'visitor';
@@ -185,7 +186,7 @@ class FrpConfig {
     final result = <String>[];
     for (final line in manualToml!.split('\n')) {
       if (line.trimLeft().startsWith('#')) continue;
-      final m = RegExp(r'''name\s*=\s*"([^"]+)"''').firstMatch(line);
+      final m = RegExp(r'''^\s*name\s*=\s*"([^"]+)"''').firstMatch(line);
       if (m != null && m.group(1)!.isNotEmpty) {
         final n = m.group(1)!;
         if (!result.contains(n)) result.add(n);
@@ -200,7 +201,7 @@ class FrpConfig {
     final result = <String>[];
     for (final line in manualToml!.split('\n')) {
       if (line.trimLeft().startsWith('#')) continue;
-      final m = RegExp(r'''type\s*=\s*"([^"]+)"''').firstMatch(line);
+      final m = RegExp(r'''^\s*type\s*=\s*"([^"]+)"''').firstMatch(line);
       if (m != null && m.group(1)!.isNotEmpty) {
         final t = m.group(1)!.toLowerCase();
         if (!result.contains(t)) result.add(t);
@@ -338,52 +339,113 @@ class FrpConfig {
   };
 
   factory FrpConfig.fromJson(Map<String, dynamic> j) => FrpConfig(
-    id: (j['id'] as num?)?.toInt() ?? 0,
-    name: j['name'] as String? ?? '',
-    serverAddr: j['serverAddr'] as String? ?? '',
-    serverPort: (j['serverPort'] as num?)?.toInt() ?? 7000,
-    token: j['token'] as String?,
-    localIp: j['localIp'] as String? ?? '127.0.0.1',
-    localPort: (j['localPort'] as num?)?.toInt() ?? 0,
-    remotePort: (j['remotePort'] as num?)?.toInt() ?? 0,
+    id: _jsonInt(j, 'id', 0),
+    name: _jsonString(j, 'name', ''),
+    serverAddr: _jsonString(j, 'serverAddr', ''),
+    serverPort: _jsonInt(j, 'serverPort', 7000),
+    token: _jsonNullableString(j, 'token'),
+    localIp: _jsonString(j, 'localIp', '127.0.0.1'),
+    localPort: _jsonInt(j, 'localPort', 0),
+    remotePort: _jsonInt(j, 'remotePort', 0),
     portMappings: _portMappingsFromJson(j['portMappings']),
-    protocol: j['protocol'] as String? ?? 'tcp',
-    customDomains:
-        (j['customDomains'] as List<dynamic>?)?.whereType<String>().toList() ??
-        const [],
-    role: j['role'] as String? ?? 'visitor',
-    secretKey: j['secretKey'] as String?,
-    serverName: j['serverName'] as String?,
-    bindPort: (j['bindPort'] as num?)?.toInt() ?? 0,
-    bindAddr: j['bindAddr'] as String? ?? '127.0.0.1',
-    useEncryption: j['useEncryption'] as bool? ?? false,
-    useCompression: j['useCompression'] as bool? ?? false,
-    useFallback: j['useFallback'] as bool? ?? false,
-    fallbackTo: j['fallbackTo'] as String? ?? '',
-    fallbackTimeoutMs: (j['fallbackTimeoutMs'] as num?)?.toInt() ?? 3000,
-    useCustomStcp: j['useCustomStcp'] as bool? ?? false,
-    stcpName: j['stcpName'] as String? ?? '',
-    stcpSecretKey: j['stcpSecretKey'] as String? ?? '',
-    stcpServerName: j['stcpServerName'] as String? ?? '',
-    stcpBindPort: (j['stcpBindPort'] as num?)?.toInt() ?? -1,
-    stcpBindAddr: j['stcpBindAddr'] as String? ?? '127.0.0.1',
-    groupId: (j['groupId'] as num?)?.toInt() ?? 0,
-    groupName: j['groupName'] as String? ?? '',
-    isGroupPrimary: j['isGroupPrimary'] as bool? ?? false,
-    linkedConfigId: (j['linkedConfigId'] as num?)?.toInt() ?? 0,
-    enabled: j['enabled'] as bool? ?? true,
-    serverId: j['serverId'] as String? ?? '',
-    running: j['running'] as bool? ?? false,
-    manualToml: j['manualToml'] as String?,
-    createdAt: (j['createdAt'] as num?)?.toInt() ?? 0,
-    updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
+    protocol: _jsonString(j, 'protocol', 'tcp').toLowerCase(),
+    customDomains: _jsonStringList(
+      j,
+      'customDomains',
+      maxItems: maxCustomDomains,
+    ),
+    role: _jsonString(j, 'role', 'visitor').toLowerCase(),
+    secretKey: _jsonNullableString(j, 'secretKey'),
+    serverName: _jsonNullableString(j, 'serverName'),
+    bindPort: _jsonInt(j, 'bindPort', 0),
+    bindAddr: _jsonString(j, 'bindAddr', '127.0.0.1'),
+    useEncryption: _jsonBool(j, 'useEncryption', false),
+    useCompression: _jsonBool(j, 'useCompression', false),
+    useFallback: _jsonBool(j, 'useFallback', false),
+    fallbackTo: _jsonString(j, 'fallbackTo', ''),
+    fallbackTimeoutMs: _jsonInt(j, 'fallbackTimeoutMs', 3000),
+    useCustomStcp: _jsonBool(j, 'useCustomStcp', false),
+    stcpName: _jsonString(j, 'stcpName', ''),
+    stcpSecretKey: _jsonString(j, 'stcpSecretKey', ''),
+    stcpServerName: _jsonString(j, 'stcpServerName', ''),
+    stcpBindPort: _jsonInt(j, 'stcpBindPort', -1),
+    stcpBindAddr: _jsonString(j, 'stcpBindAddr', '127.0.0.1'),
+    groupId: _jsonInt(j, 'groupId', 0),
+    groupName: _jsonString(j, 'groupName', ''),
+    isGroupPrimary: _jsonBool(j, 'isGroupPrimary', false),
+    linkedConfigId: _jsonInt(j, 'linkedConfigId', 0),
+    enabled: _jsonBool(j, 'enabled', true),
+    serverId: _jsonString(j, 'serverId', ''),
+    running: _jsonBool(j, 'running', false),
+    manualToml: _jsonNullableString(j, 'manualToml'),
+    createdAt: _jsonInt(j, 'createdAt', 0),
+    updatedAt: _jsonInt(j, 'updatedAt', 0),
   );
 
   static List<PortMapping> _portMappingsFromJson(Object? value) {
-    if (value is! List<dynamic>) return const [];
+    if (value == null) return const [];
+    if (value is! List<dynamic>) {
+      throw const FormatException('portMappings must be a list of objects');
+    }
+    if (value.length > maxPortMappings) {
+      throw const FormatException('too many portMappings');
+    }
+    if (value.any((mapping) => mapping is! Map)) {
+      throw const FormatException('portMappings must be a list of objects');
+    }
     return value
-        .whereType<Map>()
+        .cast<Map>()
         .map((mapping) => PortMapping.fromJson(mapping.cast<String, dynamic>()))
-        .toList();
+        .toList(growable: false);
   }
+}
+
+int _jsonInt(Map<String, dynamic> json, String key, int fallback) {
+  final value = json[key];
+  if (value == null) return fallback;
+  if (value is int) return value;
+  if (value is num && value.isFinite && value == value.truncateToDouble()) {
+    return value.toInt();
+  }
+  throw FormatException('$key must be an integer');
+}
+
+String _jsonString(Map<String, dynamic> json, String key, String fallback) {
+  final value = json[key];
+  if (value == null) return fallback;
+  if (value is String) return value;
+  throw FormatException('$key must be a string');
+}
+
+String? _jsonNullableString(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value == null) return null;
+  if (value is String) return value;
+  throw FormatException('$key must be a string or null');
+}
+
+bool _jsonBool(Map<String, dynamic> json, String key, bool fallback) {
+  final value = json[key];
+  if (value == null) return fallback;
+  if (value is bool) return value;
+  throw FormatException('$key must be a boolean');
+}
+
+List<String> _jsonStringList(
+  Map<String, dynamic> json,
+  String key, {
+  required int maxItems,
+}) {
+  final value = json[key];
+  if (value == null) return const [];
+  if (value is! List<dynamic>) {
+    throw FormatException('$key must be a list of strings');
+  }
+  if (value.length > maxItems) {
+    throw FormatException('too many $key entries');
+  }
+  if (value.any((element) => element is! String)) {
+    throw FormatException('$key must be a list of strings');
+  }
+  return value.cast<String>().toList(growable: false);
 }

@@ -211,6 +211,23 @@ class ConfigDomainService {
     return rows;
   }
 
+  /// Builds dashboard rows for one server. Empty server IDs are legacy
+  /// records and remain associated with whichever server is selected.
+  static List<AppRow> buildAppRowsForServer(
+    List<FrpConfig> configs,
+    Map<String, ConnectionType> appStatuses,
+    String serverId,
+  ) {
+    return buildAppRows(
+      configs
+          .where(
+            (config) => config.serverId.isEmpty || config.serverId == serverId,
+          )
+          .toList(growable: false),
+      appStatuses,
+    );
+  }
+
   static List<ConfigGroup> buildGroups(List<FrpConfig> configs) {
     final result = <ConfigGroup>[];
     final grouped = configs.where((e) => e.isInGroup()).toList();

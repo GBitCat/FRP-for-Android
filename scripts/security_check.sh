@@ -21,7 +21,7 @@ is_blocked_path() {
     */.release-signing-backup/*) return 0 ;;
   esac
   case "$base" in
-    *.keystore|*.jks|*.ks|*.p12|*.pfx|*.pem|*.key|*.pk8|*.frpbackup|local.properties|google-services.json)
+    *.keystore|*.jks|*.ks|*.p12|*.pfx|*.pem|*.crt|*.csr|*.key|*.pk8|*.frpbackup|*.frpca|*.frptls|local.properties|google-services.json)
       return 0
       ;;
     .env|.env.*)
