@@ -42,7 +42,9 @@ jobs:
 
       - name: Install pinned Android NDK
         working-directory: .
-        run: sdkmanager --install "ndk;28.2.13676358"
+        run: >-
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          --install "ndk;28.2.13676358"
 
       - name: Check tracked sensitive filenames
         working-directory: .
@@ -111,12 +113,14 @@ jobs:
         working-directory: .
         run: |
           set -Eeuo pipefail
-          sdkmanager --install \
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          "$sdkmanager" --install \
             "emulator" \
             "platform-tools" \
             "platforms;android-35" \
             "system-images;android-35;google_apis;x86_64"
-          printf 'no\n' | avdmanager create avd \
+          printf 'no\n' | "$avdmanager" create avd \
             --force \
             --name frp-ci-api35 \
             --package "system-images;android-35;google_apis;x86_64" \
@@ -129,6 +133,7 @@ jobs:
           ANDROID_SERIAL: emulator-5554
         run: |
           set -Eeuo pipefail
+          adb="$ANDROID_HOME/platform-tools/adb"
           if [[ -e /dev/kvm ]]; then
             sudo chmod 0666 /dev/kvm
           fi
@@ -153,17 +158,17 @@ jobs:
             if (( rc != 0 )); then
               tail -n 200 "$emulator_log" || true
             fi
-            adb -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
+            "$adb" -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
             kill "$emulator_pid" >/dev/null 2>&1 || true
             wait "$emulator_pid" 2>/dev/null || true
             exit "$rc"
           }
           trap cleanup EXIT
 
-          adb -s "$ANDROID_SERIAL" wait-for-device
+          "$adb" -s "$ANDROID_SERIAL" wait-for-device
           boot_completed=false
           for _ in $(seq 1 120); do
-            if [[ "$(adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+            if [[ "$("$adb" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
               boot_completed=true
               break
             fi
@@ -178,9 +183,9 @@ jobs:
             exit 1
           fi
 
-          adb -s "$ANDROID_SERIAL" shell settings put global window_animation_scale 0
-          adb -s "$ANDROID_SERIAL" shell settings put global transition_animation_scale 0
-          adb -s "$ANDROID_SERIAL" shell settings put global animator_duration_scale 0
+          "$adb" -s "$ANDROID_SERIAL" shell settings put global window_animation_scale 0
+          "$adb" -s "$ANDROID_SERIAL" shell settings put global transition_animation_scale 0
+          "$adb" -s "$ANDROID_SERIAL" shell settings put global animator_duration_scale 0
           ./scripts/build_frpc_test_stub_android.sh
           ./flutter_app/android/gradlew -p flutter_app/android connectedDebugAndroidTest \
             -Pfrp.integrationTestAbi=x86_64 --no-daemon
