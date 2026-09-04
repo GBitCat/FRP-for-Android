@@ -92,6 +92,31 @@ void main() {
     expect(groups.single.isGroup, isFalse);
   });
 
+  test(
+    'dashboard rows include only the selected server and legacy configs',
+    () {
+      final rows = ConfigDomainService.buildAppRowsForServer(
+        const [
+          FrpConfig(name: 'selected', serverId: 'SERVER01'),
+          FrpConfig(name: 'other', serverId: 'SERVER02'),
+          FrpConfig(name: 'legacy'),
+        ],
+        const {
+          'selected': ConnectionType.connected,
+          'other': ConnectionType.error,
+          'legacy': ConnectionType.relay,
+        },
+        'SERVER01',
+      );
+
+      expect(rows.map((row) => row.name), ['selected', 'legacy']);
+      expect(rows.map((row) => row.status), [
+        ConnectionType.connected,
+        ConnectionType.relay,
+      ]);
+    },
+  );
+
   test('multi-port generated names detect same-server collisions', () {
     const candidate = FrpConfig(
       name: 'services',
@@ -261,6 +286,47 @@ void main() {
       'Bind port must be between 1 and 65535 for SUDP',
     );
   });
+
+  test(
+    'validator rejects unsupported protocols, roles, and oversized ports',
+    () {
+      expect(
+        ConfigValidator.validate(
+          const FrpConfig(
+            name: 'bad',
+            protocol: 'shell',
+            localPort: 22,
+            remotePort: 10022,
+          ),
+        ),
+        'Unsupported proxy protocol',
+      );
+      expect(
+        ConfigValidator.validate(
+          const FrpConfig(
+            name: 'bad-role',
+            protocol: 'xtcp',
+            role: 'admin',
+            secretKey: 'secret',
+            localPort: 22,
+          ),
+        ),
+        'Role must be server or visitor',
+      );
+      expect(
+        ConfigValidator.validate(
+          const FrpConfig(
+            name: 'bad-port',
+            protocol: 'stcp',
+            role: 'server',
+            secretKey: 'secret',
+            localPort: 70000,
+          ),
+        ),
+        'Local port is required',
+      );
+    },
+  );
 
   test('HTTP form configs require a custom domain instead of remote port', () {
     expect(

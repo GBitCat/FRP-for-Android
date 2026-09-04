@@ -21,12 +21,14 @@ object BackupCipher {
     private const val IV_SIZE = 12
     private const val KEY_BITS = 256
     private const val MAX_PLAINTEXT_BYTES = 5 * 1024 * 1024
+    private const val MIN_PASSWORD_CHARS = 12
+    private const val MAX_PASSWORD_CHARS = 1024
 
     fun encrypt(plainText: ByteArray, password: String): ByteArray {
         require(plainText.isNotEmpty() && plainText.size <= MAX_PLAINTEXT_BYTES) {
             "Backup payload size is invalid"
         }
-        require(password.length >= 12) { "Backup password must contain at least 12 characters" }
+        validatePassword(password)
         val salt = ByteArray(SALT_SIZE).also(SecureRandom()::nextBytes)
         val iv = ByteArray(IV_SIZE).also(SecureRandom()::nextBytes)
         val kdf = preferredKdf()
@@ -43,6 +45,7 @@ object BackupCipher {
     }
 
     fun decrypt(envelope: ByteArray, password: String): ByteArray {
+        validatePassword(password)
         require(envelope.size > 28 && envelope.size <= MAX_PLAINTEXT_BYTES + 128) {
             "Encrypted backup size is invalid"
         }
@@ -68,7 +71,12 @@ object BackupCipher {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
             cipher.updateAAD(envelope.copyOfRange(0, headerSize))
-            cipher.doFinal(cipherText)
+            val plainText = cipher.doFinal(cipherText)
+            if (plainText.isEmpty() || plainText.size > MAX_PLAINTEXT_BYTES) {
+                Arrays.fill(plainText, 0)
+                throw IllegalArgumentException("Decrypted backup size is invalid")
+            }
+            plainText
         } catch (_: AEADBadTagException) {
             throw IllegalArgumentException("Wrong password or damaged backup")
         } finally {
@@ -83,6 +91,12 @@ object BackupCipher {
         KDF_SHA1
     }
 
+    internal fun validatePassword(password: String) {
+        require(password.length in MIN_PASSWORD_CHARS..MAX_PASSWORD_CHARS) {
+            "Backup password must contain 12–1024 characters"
+        }
+    }
+
     private fun deriveKey(
         password: String,
         salt: ByteArray,
@@ -90,12 +104,14 @@ object BackupCipher {
         kdf: Byte,
     ): ByteArray {
         val chars = password.toCharArray()
+        val spec = PBEKeySpec(chars, salt, iterations, KEY_BITS)
         return try {
             val algorithm = if (kdf == KDF_SHA256) "PBKDF2WithHmacSHA256" else "PBKDF2WithHmacSHA1"
             SecretKeyFactory.getInstance(algorithm)
-                .generateSecret(PBEKeySpec(chars, salt, iterations, KEY_BITS))
+                .generateSecret(spec)
                 .encoded
         } finally {
+            spec.clearPassword()
             Arrays.fill(chars, '\u0000')
         }
     }

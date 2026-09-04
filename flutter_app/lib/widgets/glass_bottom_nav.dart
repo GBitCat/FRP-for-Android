@@ -25,7 +25,7 @@ class GlassBottomNavigationBar extends StatefulWidget {
 
 class _GlassBottomNavigationBarState extends State<GlassBottomNavigationBar> {
   static const double _barHeight = 76;
-  static const double _glassHMargin = 81;
+  static const double _glassHMargin = 32;
 
   @override
   Widget build(BuildContext context) {

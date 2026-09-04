@@ -123,11 +123,14 @@ screenshot*.png
 *.PFX
 *.pem
 *.PEM
+*.crt
+*.CRT
+*.csr
+*.CSR
 *.key
 *.KEY
 *.pk8
 *.PK8
-*.crt
 *.hprof
 .release-signing-backup/
 
@@ -138,5 +141,9 @@ screenshot*.png
 google-services.json
 *.frpbackup
 *.FRPBACKUP
+*.frpca
+*.FRPCA
+*.frptls
+*.FRPTLS
 *backup*.zip
 *password*.txt

@@ -61,6 +61,9 @@ services:
       ANDROID_USER_HOME: /cache/home/.android
       PUB_CACHE: /cache/pub
       GRADLE_USER_HOME: /cache/gradle
+      GOPATH: /cache/home/go
+      GOMODCACHE: /cache/home/go/pkg/mod
+      GOCACHE: /cache/home/go-build
       HTTP_PROXY: ${HTTP_PROXY:-http://127.0.0.1:8118}
       HTTPS_PROXY: ${HTTPS_PROXY:-http://127.0.0.1:8118}
       http_proxy: ${HTTP_PROXY:-http://127.0.0.1:8118}

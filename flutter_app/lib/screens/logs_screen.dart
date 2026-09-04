@@ -67,9 +67,8 @@ class _LogsScreenState extends State<LogsScreen> {
       );
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Unable to copy logs')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Unable to copy logs')));
     }
   }
 
@@ -152,9 +151,8 @@ class _LogsScreenState extends State<LogsScreen> {
                 ? Center(
                     child: Text(
                       _logs.isEmpty ? 'No logs yet' : 'No matching logs',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   )
                 : ListView.builder(

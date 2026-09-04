@@ -93,18 +93,37 @@ class FrpEngine {
   }
 
   Future<void> stop() async {
+    final stopped = await _channel.invokeMethod<bool>('stop');
+    if (stopped != true) throw StateError('frpc stop was not accepted');
+  }
+
+  /// Reads the persisted foreground-service intent after an Activity/Dart
+  /// isolate recreation. This closes the gap before native status replay.
+  Future<bool> getRunRequested() async {
+    return await queryRunRequested() ?? false;
+  }
+
+  /// Reads native intent without treating an unavailable channel as Stop.
+  ///
+  /// Runtime status reconciliation must distinguish an authoritative `false`
+  /// from a transient Activity/channel failure, otherwise a connection error
+  /// could make the UI discard a still-recoverable native run intent.
+  Future<bool?> queryRunRequested() async {
     try {
-      await _channel.invokeMethod('stop');
-    } catch (_) {}
+      return await _channel.invokeMethod<bool>('isRunRequested');
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 隐藏/恢复最近任务卡片
   Future<void> setExcludeFromRecents(bool exclude) async {
-    try {
-      await _channel.invokeMethod('setExcludeFromRecents', {
-        'exclude': exclude,
-      });
-    } catch (_) {}
+    final applied = await _channel.invokeMethod<bool>('setExcludeFromRecents', {
+      'exclude': exclude,
+    });
+    if (applied != true) {
+      throw StateError('Recent-app visibility was not applied');
+    }
   }
 
   /// 读取应用版本号（设置页 About 显示）
@@ -125,6 +144,17 @@ class FrpEngine {
     } catch (_) {
       return 0;
     }
+  }
+
+  /// App-private, Android-backup-excluded storage used by the certificate
+  /// engine. The native layer owns the path so Dart never guesses an Android
+  /// package directory.
+  Future<String> getTlsStorageRoot() async {
+    final path = await _channel.invokeMethod<String>('getTlsStorageRoot');
+    if (path == null || path.isEmpty) {
+      throw StateError('Certificate storage is unavailable');
+    }
+    return path;
   }
 
   Future<String> getIpv4() async {

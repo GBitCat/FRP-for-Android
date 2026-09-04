@@ -3,10 +3,17 @@ import 'package:flutter/material.dart';
 import '../models/frp_config.dart';
 import '../state/app_state.dart';
 
+typedef ManualConfigSaver = Future<void> Function(
+  FrpConfig config,
+  bool isEditing,
+);
+
 /// 手动编写配置：顶部保留 Server ID 选择 + 分组命名，下方为 TOML 编写区域
 class ManualConfigEditScreen extends StatefulWidget {
   final int? configId;
-  const ManualConfigEditScreen({super.key, this.configId});
+  final ManualConfigSaver? onSave;
+
+  const ManualConfigEditScreen({super.key, this.configId, this.onSave});
 
   @override
   State<ManualConfigEditScreen> createState() => _ManualConfigEditScreenState();
@@ -19,6 +26,7 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
   String _groupName = '';
   String _toml = '';
   FrpConfig? _original;
+  bool _saving = false;
 
   final _groupNameCtrl = TextEditingController();
   final _tomlCtrl = TextEditingController();
@@ -65,6 +73,8 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
 
   @override
   void dispose() {
+    _groupNameCtrl.clear();
+    _tomlCtrl.clear();
     _groupNameCtrl.dispose();
     _tomlCtrl.dispose();
     super.dispose();
@@ -76,7 +86,7 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     // 从 TOML 提取实际 name（跳过注释行，避免模板里的 name 被误用）
     for (final line in _toml.split('\n')) {
       if (line.trimLeft().startsWith('#')) continue;
-      final m = RegExp(r'name\s*=\s*"([^"]+)"').firstMatch(line);
+      final m = RegExp(r'^\s*name\s*=\s*"([^"]+)"').firstMatch(line);
       if (m != null && m.group(1)!.isNotEmpty) return m.group(1)!;
     }
     return 'manual-${DateTime.now().millisecondsSinceEpoch % 100000}';
@@ -103,7 +113,8 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
             final tj = lines[j].trimLeft();
             if (tj.startsWith('[[')) break;
             if (tj.startsWith('#')) continue;
-            final m = RegExp(r'''type\s*=\s*"([^"]+)"''').firstMatch(lines[j]);
+            final m = RegExp(r'''^\s*type\s*=\s*"([^"]+)"''')
+                .firstMatch(lines[j]);
             if (m != null && m.group(1)!.isNotEmpty) {
               type = m.group(1)!.toLowerCase();
               break;
@@ -121,13 +132,14 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
   String _detectType() {
     for (final line in _toml.split('\n')) {
       if (line.trimLeft().startsWith('#')) continue;
-      final m = RegExp(r'''type\s*=\s*"([^"]+)"''').firstMatch(line);
+      final m = RegExp(r'''^\s*type\s*=\s*"([^"]+)"''').firstMatch(line);
       if (m != null && m.group(1)!.isNotEmpty) return m.group(1)!.toLowerCase();
     }
     return 'manual';
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     if (_toml.trim().isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -139,9 +151,12 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     final name = _deriveName();
     final type = _detectType();
     final finalToml = _addConfigComments(_toml);
-    if (_isEditing && _original != null) {
-      await state.updateConfig(
-        _original!.copyWith(
+    setState(() => _saving = true);
+    var saved = false;
+    try {
+      final FrpConfig candidate;
+      if (_isEditing && _original != null) {
+        candidate = _original!.copyWith(
           name: name,
           protocol: type,
           groupName: _groupName,
@@ -150,15 +165,9 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
               : _serverId,
           manualToml: finalToml,
           updatedAt: now,
-        ),
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Configuration updated')));
-    } else {
-      await state.addConfig(
-        FrpConfig(
+        );
+      } else {
+        candidate = FrpConfig(
           name: name,
           protocol: type,
           role: 'visitor',
@@ -171,14 +180,35 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
           enabled: true,
           createdAt: now,
           updatedAt: now,
-        ),
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Configuration added')));
+        );
+      }
+      final onSave = widget.onSave;
+      if (onSave != null) {
+        await onSave(candidate, _isEditing);
+      } else if (_isEditing && _original != null) {
+        await state.updateConfig(candidate);
+      } else {
+        await state.addConfig(candidate);
+      }
+      saved = true;
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to save configuration')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-    if (mounted) Navigator.pop(context);
+    if (!saved || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _isEditing ? 'Configuration updated' : 'Configuration added',
+        ),
+      ),
+    );
+    Navigator.pop(context);
   }
 
   InputDecoration _dec(String label, {String? hint}) {
@@ -191,91 +221,99 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEditing ? 'Edit Manual Config' : 'Manual Config'),
-        actions: [TextButton(onPressed: _save, child: const Text('Save'))],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Basic Information',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                // Server ID \u9009\u62e9
-                DropdownButtonFormField<String>(
-                  initialValue: _serverId,
-                  decoration: _dec('Belongs to Server'),
-                  items: appState.servers
-                      .map(
-                        (sv) => DropdownMenuItem(
-                          value: sv.serverId,
-                          child: Text(
-                            '${sv.name.isEmpty ? "FRPS Server" : sv.name} (${sv.serverId})',
+    return PopScope(
+      canPop: !_saving,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_isEditing ? 'Edit Manual Config' : 'Manual Config'),
+          actions: [
+            TextButton(
+              onPressed: _saving ? null : _save,
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Basic Information',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  // Server ID \u9009\u62e9
+                  DropdownButtonFormField<String>(
+                    initialValue: _serverId,
+                    decoration: _dec('Belongs to Server'),
+                    items: appState.servers
+                        .map(
+                          (sv) => DropdownMenuItem(
+                            value: sv.serverId,
+                            child: Text(
+                              '${sv.name.isEmpty ? "FRPS Server" : sv.name} (${sv.serverId})',
+                            ),
                           ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(() => _serverId = v ?? ''),
+                  ),
+                  const SizedBox(height: 12),
+                  // \u5206\u7ec4\u547d\u540d
+                  TextField(
+                    controller: _groupNameCtrl,
+                    onChanged: (v) => setState(() => _groupName = v),
+                    decoration: _dec(
+                      'Group Name',
+                      hint: 'Optional group for this config',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // \u624b\u52a8\u7f16\u5199\u533a\u57df
+                  Text(
+                    'Config Content',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    flex: 9,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant,
                         ),
-                      )
-                      .toList(),
-                  onChanged: (v) => setState(() => _serverId = v ?? ''),
-                ),
-                const SizedBox(height: 12),
-                // \u5206\u7ec4\u547d\u540d
-                TextField(
-                  controller: _groupNameCtrl,
-                  onChanged: (v) => setState(() => _groupName = v),
-                  decoration: _dec(
-                    'Group Name',
-                    hint: 'Optional group for this config',
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // \u624b\u52a8\u7f16\u5199\u533a\u57df
-                Text(
-                  'Config Content',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  flex: 9,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: TextField(
-                      controller: _tomlCtrl,
-                      onChanged: (v) => setState(() => _toml = v),
-                      maxLines: null,
-                      expands: true,
-                      textAlignVertical: TextAlignVertical.top,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
-                      decoration: const InputDecoration(
-                        hintText:
-                            '# \u5728\u6b64\u7f16\u5199 frpc \u914d\u7f6e...',
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.all(12),
+                      child: TextField(
+                        controller: _tomlCtrl,
+                        onChanged: (v) => setState(() => _toml = v),
+                        maxLines: null,
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.top,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                        decoration: const InputDecoration(
+                          hintText:
+                              '# \u5728\u6b64\u7f16\u5199 frpc \u914d\u7f6e...',
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.all(12),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const Spacer(flex: 1),
-              ],
+                  const Spacer(flex: 1),
+                ],
+              ),
             ),
           ),
         ),

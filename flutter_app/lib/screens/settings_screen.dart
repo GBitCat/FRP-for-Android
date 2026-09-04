@@ -1,11 +1,12 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../services/backup_crypto.dart';
 import '../services/config_import_export.dart';
+import '../services/document_io.dart';
 import '../services/frp_engine.dart';
 import '../services/sensitive_file_cache.dart';
 import '../state/app_state.dart';
@@ -31,19 +32,31 @@ class SettingsScreen extends StatelessWidget {
     Color(0xFF795548),
   ];
 
+  Future<void> _applySetting(
+    BuildContext context,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to save setting')));
+    }
+  }
+
   Future<void> _importConfig(BuildContext context) async {
     File? managedImportCopy;
     Directory? importCacheDirectory;
+    final inMemoryFiles = <Uint8List>[];
     try {
-      final path = await FlutterFileDialog.pickFile(
-        params: OpenFileDialogParams(
-          mimeTypesFilter: [
-            'application/json',
-            'application/zip',
-            'application/octet-stream',
-          ],
-          copyFileToCacheDir: true,
-        ),
+      final path = await DocumentIo.pickFile(
+        mimeTypes: const [
+          'application/json',
+          'application/zip',
+          'application/octet-stream',
+        ],
       );
       if (path == null || path.isEmpty) return;
       final file = File(path);
@@ -52,14 +65,11 @@ class SettingsScreen extends StatelessWidget {
         managedImportCopy = file;
         importCacheDirectory = cacheDirectory;
       }
-      if (await file.length() > BackupCrypto.maxEncryptedBytes) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Config file exceeds the 5 MiB limit')),
-        );
-        return;
-      }
-      var bytes = await file.readAsBytes();
+      var bytes = await SensitiveFileCache.readBoundedFile(
+        file,
+        maxBytes: BackupCrypto.maxEncryptedBytes,
+      );
+      inMemoryFiles.add(bytes);
       if (BackupCrypto.isEncrypted(bytes)) {
         if (!context.mounted) return;
         final password = await _requestPassword(
@@ -68,6 +78,7 @@ class SettingsScreen extends StatelessWidget {
         );
         if (password == null || !context.mounted) return;
         bytes = await BackupCrypto.decrypt(bytes, password);
+        inMemoryFiles.add(bytes);
       }
       final data = ConfigImportExport.parseImportBytes(bytes);
       final count = await appState.applyImport(data);
@@ -89,6 +100,9 @@ class SettingsScreen extends StatelessWidget {
         context,
       ).showSnackBar(const SnackBar(content: Text('Failed to import config')));
     } finally {
+      for (final bytes in inMemoryFiles) {
+        bytes.fillRange(0, bytes.length, 0);
+      }
       if (managedImportCopy != null && importCacheDirectory != null) {
         await SensitiveFileCache.deleteManagedImportCopy(
           managedImportCopy,
@@ -143,32 +157,36 @@ class SettingsScreen extends StatelessWidget {
       if (password == null || !context.mounted) return;
     }
     File? temporaryFile;
+    Directory? exportCacheDirectory;
+    final inMemoryFiles = <Uint8List>[];
     try {
+      final includeSecrets = mode == _ExportMode.encrypted;
       var bytes = ConfigImportExport.buildExportZip(
         appState.configs,
         appState.servers,
         appState.selectedServerId,
-        appState.buildAllServerTomls(),
-        includeSecrets: mode == _ExportMode.encrypted,
+        includeSecrets ? appState.buildAllServerTomls() : const {},
+        includeSecrets: includeSecrets,
       );
+      inMemoryFiles.add(bytes);
       if (mode == _ExportMode.encrypted) {
         bytes = await BackupCrypto.encrypt(bytes, password!);
+        inMemoryFiles.add(bytes);
       }
-      final dir = await getTemporaryDirectory();
+      exportCacheDirectory = await getTemporaryDirectory();
       final encrypted = mode == _ExportMode.encrypted;
       final fileName = encrypted
           ? 'frp_backup.frpbackup'
           : 'frp_backup_redacted.zip';
-      temporaryFile = File('${dir.path}/$fileName');
+      temporaryFile = await SensitiveFileCache.createManagedExportFile(
+        exportCacheDirectory,
+        fileName,
+      );
       await temporaryFile.writeAsBytes(bytes, flush: true);
-      final saved = await FlutterFileDialog.saveFile(
-        params: SaveFileDialogParams(
-          sourceFilePath: temporaryFile.path,
-          fileName: fileName,
-          mimeTypesFilter: [
-            encrypted ? 'application/octet-stream' : 'application/zip',
-          ],
-        ),
+      final saved = await DocumentIo.saveFile(
+        sourceFilePath: temporaryFile.path,
+        fileName: fileName,
+        mimeTypes: [encrypted ? 'application/octet-stream' : 'application/zip'],
       );
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -188,9 +206,15 @@ class SettingsScreen extends StatelessWidget {
         context,
       ).showSnackBar(const SnackBar(content: Text('Failed to export config')));
     } finally {
-      try {
-        await temporaryFile?.delete();
-      } catch (_) {}
+      for (final bytes in inMemoryFiles) {
+        bytes.fillRange(0, bytes.length, 0);
+      }
+      if (temporaryFile != null && exportCacheDirectory != null) {
+        await SensitiveFileCache.deleteManagedExportFile(
+          temporaryFile,
+          exportCacheDirectory,
+        );
+      }
     }
   }
 
@@ -243,8 +267,11 @@ class SettingsScreen extends StatelessWidget {
               ),
               FilledButton(
                 onPressed: () {
-                  if (password.text.length < 12) {
+                  if (password.text.length < BackupCrypto.minPasswordLength) {
                     setState(() => error = 'Use at least 12 characters');
+                  } else if (password.text.length >
+                      BackupCrypto.maxPasswordLength) {
+                    setState(() => error = 'Use at most 1024 characters');
                   } else if (confirm && password.text != confirmation.text) {
                     setState(() => error = 'Passwords do not match');
                   } else {
@@ -258,6 +285,8 @@ class SettingsScreen extends StatelessWidget {
         ),
       );
     } finally {
+      password.clear();
+      confirmation.clear();
       password.dispose();
       confirmation.dispose();
     }
@@ -285,29 +314,38 @@ class SettingsScreen extends StatelessWidget {
                         ListTile(
                           leading: const Icon(Icons.brightness_6_outlined),
                           title: const Text('Theme mode'),
-                          subtitle: DropdownButtonFormField<ThemeMode>(
-                            initialValue: state.theme.mode,
+                          subtitle: InputDecorator(
                             decoration: const InputDecoration(
                               border: OutlineInputBorder(),
                             ),
-                            items: const [
-                              DropdownMenuItem(
-                                value: ThemeMode.system,
-                                child: Text('System'),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<ThemeMode>(
+                                value: state.theme.mode,
+                                isExpanded: true,
+                                isDense: true,
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: ThemeMode.system,
+                                    child: Text('System'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: ThemeMode.light,
+                                    child: Text('Light'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: ThemeMode.dark,
+                                    child: Text('Dark'),
+                                  ),
+                                ],
+                                onChanged: (m) async {
+                                  if (m == null) return;
+                                  await _applySetting(
+                                    context,
+                                    () => appState.setThemeMode(m),
+                                  );
+                                },
                               ),
-                              DropdownMenuItem(
-                                value: ThemeMode.light,
-                                child: Text('Light'),
-                              ),
-                              DropdownMenuItem(
-                                value: ThemeMode.dark,
-                                child: Text('Dark'),
-                              ),
-                            ],
-                            onChanged: (m) {
-                              if (m == null) return;
-                              appState.setTheme(state.theme.copyWith(mode: m));
-                            },
+                            ),
                           ),
                         ),
                         ListTile(
@@ -319,9 +357,10 @@ class SettingsScreen extends StatelessWidget {
                               children: List.generate(_accents.length, (i) {
                                 final selected = state.theme.accentIndex == i;
                                 return GestureDetector(
-                                  onTap: () {
-                                    appState.setTheme(
-                                      state.theme.copyWith(accentIndex: i),
+                                  onTap: () async {
+                                    await _applySetting(
+                                      context,
+                                      () => appState.setThemeAccent(i),
                                     );
                                   },
                                   child: Container(
@@ -333,9 +372,9 @@ class SettingsScreen extends StatelessWidget {
                                       shape: BoxShape.circle,
                                       border: selected
                                           ? Border.all(
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface,
                                               width: 2,
                                             )
                                           : null,
@@ -363,7 +402,12 @@ class SettingsScreen extends StatelessWidget {
                           ),
                           trailing: Switch(
                             value: state.hideFromRecents,
-                            onChanged: (v) => state.setHideFromRecents(v),
+                            onChanged: (v) async {
+                              await _applySetting(
+                                context,
+                                () => state.setHideFromRecents(v),
+                              );
+                            },
                           ),
                         ),
                       ],
