@@ -107,22 +107,83 @@ jobs:
           ./android/gradlew -p android app:assembleDebugAndroidTest
           -Pfrp.integrationTestAbi=x86_64 --no-daemon
 
+      - name: Install Android API 35 emulator
+        working-directory: .
+        run: |
+          set -Eeuo pipefail
+          sdkmanager --install \
+            "emulator" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "system-images;android-35;google_apis;x86_64"
+          printf 'no\n' | avdmanager create avd \
+            --force \
+            --name frp-ci-api35 \
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device pixel_5
+
       - name: Run Android integration tests on API 35
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_5
-          disable-animations: true
-          emulator-options: >-
-            -no-snapshot-load -no-snapshot-save -no-window
-            -gpu swiftshader_indirect -noaudio -no-boot-anim
-            -camera-back none -camera-front none
-          script: |
-            ./scripts/build_frpc_test_stub_android.sh
-            ./flutter_app/android/gradlew -p flutter_app/android connectedDebugAndroidTest \
-              -Pfrp.integrationTestAbi=x86_64 --no-daemon
+        working-directory: .
+        timeout-minutes: 15
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          set -Eeuo pipefail
+          if [[ -e /dev/kvm ]]; then
+            sudo chmod 0666 /dev/kvm
+          fi
+
+          emulator_log="$RUNNER_TEMP/frp-api35-emulator.log"
+          "$ANDROID_HOME/emulator/emulator" \
+            -avd frp-ci-api35 \
+            -port 5554 \
+            -no-snapshot-load \
+            -no-snapshot-save \
+            -no-window \
+            -gpu swiftshader_indirect \
+            -noaudio \
+            -no-boot-anim \
+            -camera-back none \
+            -camera-front none \
+            >"$emulator_log" 2>&1 &
+          emulator_pid=$!
+
+          cleanup() {
+            rc=$?
+            if (( rc != 0 )); then
+              tail -n 200 "$emulator_log" || true
+            fi
+            adb -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
+            kill "$emulator_pid" >/dev/null 2>&1 || true
+            wait "$emulator_pid" 2>/dev/null || true
+            exit "$rc"
+          }
+          trap cleanup EXIT
+
+          adb -s "$ANDROID_SERIAL" wait-for-device
+          boot_completed=false
+          for _ in $(seq 1 120); do
+            if [[ "$(adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              boot_completed=true
+              break
+            fi
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              printf '%s\n' 'Android emulator exited before completing boot.' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          if [[ "$boot_completed" != true ]]; then
+            printf '%s\n' 'Timed out waiting for the Android emulator to boot.' >&2
+            exit 1
+          fi
+
+          adb -s "$ANDROID_SERIAL" shell settings put global window_animation_scale 0
+          adb -s "$ANDROID_SERIAL" shell settings put global transition_animation_scale 0
+          adb -s "$ANDROID_SERIAL" shell settings put global animator_duration_scale 0
+          ./scripts/build_frpc_test_stub_android.sh
+          ./flutter_app/android/gradlew -p flutter_app/android connectedDebugAndroidTest \
+            -Pfrp.integrationTestAbi=x86_64 --no-daemon
 
       - name: Build unsigned API 28+ Release APK
         env:
