@@ -4,6 +4,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-Android-green)
 ![Arch](https://img.shields.io/badge/arch-arm64--v8a-blue)
+[![Release](https://img.shields.io/github/v/release/GBitCat/FRP-for-Android?display_name=tag)](https://github.com/GBitCat/FRP-for-Android/releases/latest)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
 ## ✨ 功能特性
@@ -57,12 +58,27 @@
 
 ## 🚀 快速开始
 
-1. **下载 APK**：从 [Releases](https://github.com/GBitCat/FRP-for-Android/releases) 页面下载最新版本（`arm64-v8a`）
+1. **下载 APK**：从 [Releases](https://github.com/GBitCat/FRP-for-Android/releases) 页面下载最新版本（`arm64-v8a`）及对应的 `app-release.apk.sha256`
 2. **安装并打开**：首次启动会弹出省电策略提醒，建议允许通知并取消电池优化
 3. **添加 Server**：配置区 → Server → 添加你的 frps 服务器（地址、端口、token）
 4. **添加应用配置**：配置区 → `visitor.FormConfig` 添加 XTCP / XUDP visitor，或使用 Manual Config 编写其他 proxy / visitor；使用 XUDP 前请先确认全部节点均已部署兼容的 `frp-xudp`
-5. **启动连接**：仪表盘 → 打开 Server 开关
-6. **访问对端**：在手机上连接本地 visitor 端口（如 `127.0.0.1:39522`）即可访问对端设备
+5. **可选启用双向 TLS**：在证书管理区创建或恢复 CA、生成设备身份，并在 Server Config 的 `Bidirectional Verification` 中选择身份
+6. **启动连接**：仪表盘 → 打开 Server 开关
+7. **访问对端**：在手机上连接本地 visitor 端口（如 `127.0.0.1:39522`）即可访问对端设备
+
+下载完成后可在保存 APK 与摘要文件的目录执行校验：
+
+```bash
+sha256sum --check app-release.apk.sha256
+```
+
+### 双向 TLS 快速流程
+
+1. 在 **证书管理 → Authorities** 创建 CA，或用恢复包恢复已有 CA。
+2. 在 **Certificates** 生成本机身份与 CSR，使用受信任 CA 签发客户端证书后，将证书安装回该身份。
+3. 为 frps 的域名或 IP 生成服务端证书部署包；frps 使用其中的 `server.crt`、`server.key`，并将 `trustedCaFile` 指向 `trusted-client-ca.crt`。
+4. 将部署包中的 `server-ca.crt` 安装为设备身份的可信服务端 CA。存在多个客户端 CA 时，把允许接入的客户端 CA 合并到 frps 的 `trusted-client-ca.crt` PEM bundle。
+5. 回到 **Server Config → Bidirectional Verification**，从下拉栏选择已安装完成的设备身份。
 
 ## 🛠️ 开发环境
 
@@ -230,13 +246,13 @@ secretKey = "your_secret_key"
 ## ⚠️ 注意事项
 
 1. **架构**：仅支持 `arm64-v8a`（绝大多数现代 Android 手机）
-2. **Android 版本**：建议 Android 8.0+（API 26+）；Android 13+ 需要允许通知权限
+2. **Android 版本**：正式 Release APK 支持 Android 9.0+（API 28+）；Android 13+ 需要允许通知权限
 3. **frps 端**：需在 frps 上配置对应的 stcp/xtcp 代理，且对端设备需运行 frpc 并注册相同 secretKey
 4. **XUDP 全链路版本**：`frps`、XUDP proxy 端 `frpc`、XUDP visitor 端 `frpc` 必须全部使用兼容的 `GBitCat/frp-xudp`，推荐统一为当前内置的 `v0.71.0-v2`；不能只在 Android 端替换，也不要与官方 FRP 或其他 fork 混用
 5. **后台驻留**：为保证长时间稳定连接，请允许通知权限、取消电池优化（应用内首次启动会引导跳转），部分国产 ROM 还需在系统设置中允许后台运行
 6. **内存显示**：卡片显示的是 App 与 frpc 进程的 RSS 占用，按设备总内存计算百分比
 7. **敏感画面**：Release 版启用 Android `FLAG_SECURE`，系统截图、录屏与最近任务缩略图会被阻止或隐藏；Debug 版明确不启用，便于开发测试
-8. **旧版签名限制**：Android 8.1 及更早版本不支持当前 APK 使用的 v3 密钥轮换；只从官方 Releases 安装并核对 SHA-256
+8. **旧版签名限制**：Android 8.1 及更早版本不支持当前 APK 使用的 v3 密钥轮换，因此不在正式 Release APK 的支持范围内；只从官方 Releases 安装并核对 SHA-256
 9. **CA 恢复**：删除 CA 前先导出恢复包并妥善保存两层密码；当前版本不提供在线 CA、证书吊销列表或自动轮换
 
 ## 🤝 贡献
