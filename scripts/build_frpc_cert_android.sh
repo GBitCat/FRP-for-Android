@@ -8,7 +8,7 @@ source_dir="$repo_dir/native/frpc_cert"
 output_dir="$repo_dir/flutter_app/android/app/src/main/jniLibs/arm64-v8a"
 output_file="$output_dir/libfrpc_cert.so"
 android_api_level="${FRP_CERT_ANDROID_API_LEVEL:-21}"
-ndk_root="${ANDROID_NDK_HOME:-${ANDROID_HOME:?ANDROID_HOME is required}/ndk/28.2.13676358}"
+ndk_root="${FRP_ANDROID_NDK_HOME:-${ANDROID_HOME:?ANDROID_HOME is required}/ndk/28.2.13676358}"
 compiler="$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${android_api_level}-clang"
 mode="${1:---install}"
 
