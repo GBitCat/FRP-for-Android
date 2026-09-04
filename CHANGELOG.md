@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-04
+
+### Added
+
+- Added managed mutual-TLS certificate management backed by a dedicated Go shared library and Dart FFI.
+- Added separate device identity and CA workflows for CSR generation, certificate installation, external CSR signing, CA recovery, and frps deployment bundles.
+- Added Server Config identity selection and runtime resolution of private certificate paths for bidirectional verification.
+- Added real frpc/frps mutual-TLS end-to-end coverage and Android API 35 instrumentation coverage in CI.
+
+### Changed
+
+- Made Server Config fields compact and visually consistent, with certificate identities selected from a drop-down.
+- Allowed screen capture in Debug builds while retaining screenshot and recording protection in Release builds.
+- Hardened the release workflow with reproducible native-library checks, isolated signing, signer lineage validation, provenance attestation, and atomic tag publication.
+
 ### Security
 
 - Isolated release signing material from the repository and Docker mounts.
