@@ -128,7 +128,7 @@ jobs:
 
       - name: Run Android integration tests on API 35
         working-directory: .
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           ANDROID_SERIAL: emulator-5554
         run: |
@@ -138,6 +138,7 @@ jobs:
             sudo chmod 0666 /dev/kvm
           fi
 
+          "$adb" start-server
           emulator_log="$RUNNER_TEMP/frp-api35-emulator.log"
           "$ANDROID_HOME/emulator/emulator" \
             -avd frp-ci-api35 \
@@ -165,7 +166,24 @@ jobs:
           }
           trap cleanup EXIT
 
-          "$adb" -s "$ANDROID_SERIAL" wait-for-device
+          device_connected=false
+          for _ in $(seq 1 60); do
+            device_state="$("$adb" -s "$ANDROID_SERIAL" get-state 2>/dev/null || true)"
+            if [[ "$device_state" == "device" ]]; then
+              device_connected=true
+              break
+            fi
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              printf '%s\n' 'Android emulator exited before connecting to adb.' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          if [[ "$device_connected" != true ]]; then
+            printf '%s\n' 'Timed out waiting for the Android emulator to connect to adb.' >&2
+            exit 1
+          fi
+
           boot_completed=false
           for _ in $(seq 1 120); do
             if [[ "$("$adb" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
