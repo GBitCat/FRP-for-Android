@@ -23,14 +23,14 @@ for volume in "${cache_volumes[@]}"; do
   fi
 done
 
-if ! docker image inspect "$dev_image" >/dev/null 2>&1; then
-  docker build --network host \
-    --build-arg HTTP_PROXY="$proxy_url" \
-    --build-arg HTTPS_PROXY="$proxy_url" \
-    --build-arg NO_PROXY="$no_proxy_value" \
-    -t "$dev_image" \
-    "$project_dir"
-fi
+# Always ask Docker to evaluate the pinned Dockerfile. Unchanged layers are
+# cached, while a stale local tag can no longer silently retain an old SDK.
+docker build --network host \
+  --build-arg HTTP_PROXY="$proxy_url" \
+  --build-arg HTTPS_PROXY="$proxy_url" \
+  --build-arg NO_PROXY="$no_proxy_value" \
+  -t "$dev_image" \
+  "$project_dir"
 
 docker run --rm \
   -v frpc-android-pub-cache:/cache/pub \
@@ -49,6 +49,9 @@ exec docker run --rm --network host --init \
   -e ANDROID_USER_HOME=/cache/home/.android \
   -e PUB_CACHE=/cache/pub \
   -e GRADLE_USER_HOME=/cache/gradle \
+  -e GOPATH=/cache/home/go \
+  -e GOMODCACHE=/cache/home/go/pkg/mod \
+  -e GOCACHE=/cache/home/go-build \
   -e HTTP_PROXY="$proxy_url" \
   -e HTTPS_PROXY="$proxy_url" \
   -e http_proxy="$proxy_url" \

@@ -5,10 +5,30 @@ import '../models/server_config.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/glass_sliver_appbar.dart';
 import '../state/app_state.dart';
+import '../services/certificates/certificate_engine.dart';
+import '../services/certificates/certificate_models.dart';
 import '../services/config_domain_service.dart';
+import '../services/secure_clipboard.dart';
 import '../widgets/app_card.dart';
 import 'config_edit_screen.dart';
 import 'manual_config_edit_screen.dart';
+
+Future<bool> _runConfigMutation(
+  BuildContext context,
+  Future<void> Function() action,
+  String failureMessage,
+) async {
+  try {
+    await action();
+    return true;
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(failureMessage)));
+    }
+    return false;
+  }
+}
 
 class ConfigsScreen extends StatelessWidget {
   const ConfigsScreen({super.key});
@@ -57,8 +77,14 @@ class ConfigsScreen extends StatelessWidget {
                         child: _ServerListItem(
                           server: s,
                           selected: state.isServerSelected(s.serverId),
-                          onSelect: () => state.selectServer(s.serverId),
-                          onPreview: () => _showServerPreview(context),
+                          onSelect: () async {
+                            await _runConfigMutation(
+                              context,
+                              () => state.selectServer(s.serverId),
+                              'Unable to switch server',
+                            );
+                          },
+                          onPreview: () => _showServerPreview(context, s),
                           onEdit: () => _showServerEdit(context, initial: s),
                           onDelete: () => _confirmDeleteServer(context, s),
                         ),
@@ -207,9 +233,13 @@ class ConfigsScreen extends StatelessWidget {
                   child: const Text('Cancel'),
                 ),
                 TextButton(
-                  onPressed: () {
+                  onPressed: () async {
                     Navigator.pop(dialogContext);
-                    appState.deleteServer(s.serverId);
+                    await _runConfigMutation(
+                      context,
+                      () => appState.deleteServer(s.serverId),
+                      'Unable to delete server',
+                    );
                   },
                   child: const Text('Delete'),
                 ),
@@ -221,8 +251,9 @@ class ConfigsScreen extends StatelessWidget {
     );
   }
 
-  void _showServerPreview(BuildContext context) {
+  void _showServerPreview(BuildContext context, ServerConfig server) {
     final state = appState;
+    final preview = state.buildFullTomlFor(server);
     showFrostedDialog<void>(
       context: context,
       builder: (dialogContext) => FrostedCard(
@@ -240,19 +271,46 @@ class ConfigsScreen extends StatelessWidget {
                 maxHeight: MediaQuery.of(context).size.height * 0.6,
               ),
               child: SingleChildScrollView(
-                child: SelectableText(
-                  state.generateServerPreview(),
+                child: Text(
+                  preview,
+                  key: const ValueKey('server_config_preview_text'),
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
                 ),
               ),
             ),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Close'),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Close'),
+                ),
+                TextButton(
+                  key: const ValueKey('copy_server_config_preview'),
+                  onPressed: () async {
+                    try {
+                      await SecureClipboard.copy(preview);
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Server config copied; clipboard clears in 60s',
+                          ),
+                        ),
+                      );
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Unable to copy server config'),
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Copy'),
+                ),
+              ],
             ),
           ],
         ),
@@ -286,9 +344,13 @@ void _confirmDelete(BuildContext context, FrpConfig config) {
                 child: const Text('Cancel'),
               ),
               TextButton(
-                onPressed: () {
+                onPressed: () async {
                   Navigator.pop(dialogContext);
-                  appState.deleteConfig(config.id);
+                  await _runConfigMutation(
+                    context,
+                    () => appState.deleteConfig(config.id),
+                    'Unable to delete configuration',
+                  );
                 },
                 child: const Text('Delete'),
               ),
@@ -322,9 +384,13 @@ void _confirmDeleteGroup(BuildContext context, ConfigGroup group) {
                 child: const Text('Cancel'),
               ),
               TextButton(
-                onPressed: () {
+                onPressed: () async {
                   Navigator.pop(dialogContext);
-                  appState.deleteGroup(group.groupId);
+                  await _runConfigMutation(
+                    context,
+                    () => appState.deleteGroup(group.groupId),
+                    'Unable to delete configuration group',
+                  );
                 },
                 child: const Text('Delete'),
               ),
@@ -347,16 +413,14 @@ class _EmptyConfigs extends StatelessWidget {
         children: [
           Text(
             'No configurations yet',
-            style: Theme.of(
-              context,
-            ).textTheme.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodyLarge
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 8),
           Text(
             'Tap + to add or import from menu',
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -415,9 +479,8 @@ class _ServerListItem extends StatelessWidget {
               ),
               child: Text(
                 'Current',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: scheme.onPrimaryContainer,
-                ),
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: scheme.onPrimaryContainer),
               ),
             ),
           ],
@@ -503,16 +566,21 @@ class _ConfigGroupItem extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   protocolText,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
           ),
           Switch(
             value: group.enabled,
-            onChanged: (v) => appState.setGroupEnabled(group.groupId, v),
+            onChanged: (v) async {
+              await _runConfigMutation(
+                context,
+                () => appState.setGroupEnabled(group.groupId, v),
+                'Unable to update configuration group',
+              );
+            },
           ),
           IconButton(
             tooltip: 'Options',
@@ -578,16 +646,21 @@ class _ConfigItem extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   '${config.manualTypes.isEmpty ? config.protocol.toUpperCase() : config.manualTypes.join(' + ').toUpperCase()}$portSummary · ${config.isVisitor() ? "Visitor" : "Server"}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
           ),
           Switch(
             value: config.enabled,
-            onChanged: (v) => appState.setConfigEnabled(config.id, v),
+            onChanged: (v) async {
+              await _runConfigMutation(
+                context,
+                () => appState.setConfigEnabled(config.id, v),
+                'Unable to update configuration',
+              );
+            },
           ),
           IconButton(
             tooltip: 'Options',
@@ -601,9 +674,23 @@ class _ConfigItem extends StatelessWidget {
 }
 
 /// Server 编辑对话框（含 8 位 ID 展示与重置）
+typedef CertificateInventoryLoader = Future<CertificateInventory> Function();
+typedef ServerConfigSaver = Future<void> Function(
+  ServerConfig config,
+  String? originalServerId,
+);
+
 class ServerEditDialog extends StatefulWidget {
   final ServerConfig? initial;
-  const ServerEditDialog({super.key, this.initial});
+  final CertificateInventoryLoader? certificateInventoryLoader;
+  final ServerConfigSaver? onSave;
+
+  const ServerEditDialog({
+    super.key,
+    this.initial,
+    this.certificateInventoryLoader,
+    this.onSave,
+  });
 
   @override
   State<ServerEditDialog> createState() => _ServerEditDialogState();
@@ -615,15 +702,28 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
   late TextEditingController _port;
   late TextEditingController _token;
   late TextEditingController _serverId;
+  late TextEditingController _tlsServerName;
+  late TextEditingController _tlsCertFile;
+  late TextEditingController _tlsKeyFile;
+  late TextEditingController _tlsTrustedCaFile;
+  List<ManagedIdentityRecord> _certificateIdentities = const [];
+  String? _certificateIdentitySelection;
+  String? _certificateLoadError;
+  bool _certificatesLoading = true;
   late String _protocol;
   late bool _tcpMux;
+  late bool _tlsEnabled;
+  late bool _securityExpanded;
   bool _showToken = false;
+  bool _saving = false;
   late int _heartbeatInterval;
   late int _heartbeatTimeout;
   late int _keepalive;
 
-  static const _protocols = ['tcp', 'kcp', 'quic', 'ws', 'wss'];
-  static const _intervals = [10, 20, 30, 45, 60, 90, 120];
+  static const _protocols = ServerConfig.supportedProtocols;
+  static const _intervals = ServerConfig.intervalPresets;
+  static const _controlHeight = 44.0;
+  static const _controlFontSize = 14.0;
 
   @override
   void initState() {
@@ -635,28 +735,144 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
     _port = TextEditingController(text: s.serverPort.toString());
     _token = TextEditingController(text: s.token);
     _serverId = TextEditingController(text: s.serverId);
-    _protocol = s.protocol;
+    _tlsServerName = TextEditingController(text: s.tlsServerName);
+    _tlsCertFile = TextEditingController(text: s.tlsCertFile);
+    _tlsKeyFile = TextEditingController(text: s.tlsKeyFile);
+    _tlsTrustedCaFile = TextEditingController(text: s.tlsTrustedCaFile);
+    _protocol = ServerConfig.normalizeProtocol(s.protocol);
     _tcpMux = s.tcpMux;
+    _tlsEnabled = s.tlsEnabled;
+    _securityExpanded = s.tlsEnabled;
     _heartbeatInterval = s.heartbeatInterval;
     _heartbeatTimeout = s.heartbeatTimeout;
     _keepalive = s.tcpMuxKeepaliveInterval;
+    _loadCertificateIdentities();
+  }
+
+  Future<void> _loadCertificateIdentities() async {
+    if (mounted && !_certificatesLoading) {
+      setState(() {
+        _certificatesLoading = true;
+        _certificateLoadError = null;
+      });
+    }
+    try {
+      final inventory =
+          await (widget.certificateInventoryLoader?.call() ??
+              CertificateEngine.instance.listInventory());
+      if (!mounted) return;
+      final configured = _findConfiguredIdentity(inventory.identities);
+      setState(() {
+        _certificateIdentities = inventory.identities;
+        _certificateIdentitySelection = configured?.id;
+        if (configured != null && configured.isReady) {
+          _tlsCertFile.text = configured.certificatePath;
+          _tlsKeyFile.text = configured.privateKeyPath;
+          _tlsTrustedCaFile.text = configured.trustedCaPath;
+        } else {
+          _tlsCertFile.clear();
+          _tlsKeyFile.clear();
+          _tlsTrustedCaFile.clear();
+        }
+        _certificateLoadError = null;
+        _certificatesLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _certificateIdentities = const [];
+        _certificateIdentitySelection = null;
+        _tlsCertFile.clear();
+        _tlsKeyFile.clear();
+        _tlsTrustedCaFile.clear();
+        _certificateLoadError = 'Unable to load certificate identities';
+        _certificatesLoading = false;
+      });
+    }
+  }
+
+  ManagedIdentityRecord? _findConfiguredIdentity(
+    List<ManagedIdentityRecord> identities,
+  ) {
+    final configuredId = widget.initial?.tlsIdentityId.trim() ?? '';
+    for (final identity in identities) {
+      if (configuredId.isNotEmpty && identity.id == configuredId) {
+        return identity;
+      }
+    }
+    for (final identity in identities) {
+      if (identity.certificatePath == _tlsCertFile.text.trim() &&
+          identity.privateKeyPath == _tlsKeyFile.text.trim() &&
+          identity.trustedCaPath == _tlsTrustedCaFile.text.trim() &&
+          identity.isReady) {
+        return identity;
+      }
+    }
+    return null;
+  }
+
+  ManagedIdentityRecord? _identityById(String? id) {
+    if (id == null) return null;
+    for (final identity in _certificateIdentities) {
+      if (identity.id == id) return identity;
+    }
+    return null;
+  }
+
+  void _selectCertificateIdentity(String? id) {
+    if (id == null) return;
+    final identity = _identityById(id);
+    if (identity == null || !identity.isReady) return;
+    setState(() {
+      _certificateIdentitySelection = identity.id;
+      _tlsCertFile.text = identity.certificatePath;
+      _tlsKeyFile.text = identity.privateKeyPath;
+      _tlsTrustedCaFile.text = identity.trustedCaPath;
+    });
   }
 
   @override
   void dispose() {
+    _name.clear();
+    _addr.clear();
+    _port.clear();
+    _token.clear();
+    _serverId.clear();
+    _tlsServerName.clear();
+    _tlsCertFile.clear();
+    _tlsKeyFile.clear();
+    _tlsTrustedCaFile.clear();
     _name.dispose();
     _addr.dispose();
     _port.dispose();
     _token.dispose();
     _serverId.dispose();
+    _tlsServerName.dispose();
+    _tlsCertFile.dispose();
+    _tlsKeyFile.dispose();
+    _tlsTrustedCaFile.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final port = int.tryParse(_port.text);
     if (_addr.text.trim().isEmpty || port == null || port < 1 || port > 65535) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a valid server address and port')),
+      );
+      return;
+    }
+    final selectedIdentity = _identityById(_certificateIdentitySelection);
+    if (_tlsEnabled &&
+        (selectedIdentity == null || !selectedIdentity.isReady)) {
+      setState(() => _securityExpanded = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Select a certificate identity that is ready for mutual TLS',
+          ),
+        ),
       );
       return;
     }
@@ -674,21 +890,41 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
       return;
     }
     final base = widget.initial ?? ServerConfig(serverId: id);
-    await appState.saveServerConfig(
-      base.copyWith(
-        name: _name.text,
-        serverAddr: _addr.text.trim(),
-        serverPort: port,
-        token: _token.text,
-        serverId: id,
-        protocol: _protocol,
-        tcpMux: _tcpMux,
-        heartbeatInterval: _heartbeatInterval,
-        heartbeatTimeout: _heartbeatTimeout,
-        tcpMuxKeepaliveInterval: _keepalive,
-      ),
-      originalServerId: originalId,
+    final updated = base.copyWith(
+      name: _name.text.trim(),
+      serverAddr: _addr.text.trim(),
+      serverPort: port,
+      token: _token.text,
+      serverId: id,
+      protocol: _protocol,
+      tcpMux: _tcpMux,
+      heartbeatInterval: _heartbeatInterval,
+      heartbeatTimeout: _heartbeatTimeout,
+      tcpMuxKeepaliveInterval: _keepalive,
+      tlsEnabled: _tlsEnabled,
+      tlsServerName: _tlsServerName.text.trim(),
+      tlsIdentityId:
+          selectedIdentity?.id ?? (_tlsEnabled ? '' : base.tlsIdentityId),
+      tlsCertFile: selectedIdentity?.certificatePath ?? '',
+      tlsKeyFile: selectedIdentity?.privateKeyPath ?? '',
+      tlsTrustedCaFile: selectedIdentity?.trustedCaPath ?? '',
     );
+    final validationError = updated.storageValidationError();
+    if (validationError != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(validationError)));
+      return;
+    }
+    setState(() => _saving = true);
+    final saved = await _runConfigMutation(
+      context,
+      () =>
+          widget.onSave?.call(updated, originalId) ??
+          appState.saveServerConfig(updated, originalServerId: originalId),
+      'Unable to save server configuration',
+    );
+    if (mounted) setState(() => _saving = false);
+    if (!saved) return;
     if (!mounted) return;
     Navigator.pop(context);
   }
@@ -733,168 +969,497 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return FrostedCard(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            widget.initial == null ? 'Add Server' : 'Edit Server Connection',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 12),
-          ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.65,
+    return PopScope(
+      canPop: !_saving,
+      child: FrostedCard(
+        key: const ValueKey('server_config_dialog'),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.dns_outlined,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  widget.initial == null ? 'Add Server' : 'Edit Server',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ],
             ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 顶部留白：避免第一个输入框的浮动标签被滚动区域裁剪
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: _name,
-                    decoration: const InputDecoration(
-                      labelText: 'Name',
-                      hintText: 'e.g., Home Server',
-                      border: OutlineInputBorder(),
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.72,
+              ),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(top: 4),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _sectionTitle('Connection'),
+                    const SizedBox(height: 6),
+                    TextField(
+                      key: const ValueKey('server_name'),
+                      controller: _name,
+                      style: _controlTextStyle(),
+                      decoration: _compactDecoration(
+                        'Name',
+                        hint: 'e.g., Home Server',
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _serverId,
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Server ID',
-                            border: OutlineInputBorder(),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: const ValueKey('server_id'),
+                      controller: _serverId,
+                      readOnly: true,
+                      style: _controlTextStyle(fontFamily: 'monospace'),
+                      decoration: _compactDecoration(
+                        'Server ID',
+                        suffixIcon: IconButton(
+                          key: const ValueKey('server_reset_id'),
+                          tooltip: 'Reset ID',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: _resetId,
+                          icon: const Icon(Icons.refresh, size: 18),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: TextField(
+                            key: const ValueKey('server_address'),
+                            controller: _addr,
+                            autocorrect: false,
+                            style: _controlTextStyle(),
+                            decoration: _compactDecoration(
+                              'Server Address *',
+                              hint: 'frp.example.com',
+                            ),
                           ),
                         ),
-                      ),
-                      TextButton(
-                        onPressed: _resetId,
-                        child: const Text('Reset ID'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _addr,
-                    decoration: const InputDecoration(
-                      labelText: 'Server Address *',
-                      hintText: 'e.g., frp.example.com',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _port,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Port',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: const ValueKey('server_token'),
-                    controller: _token,
-                    obscureText: !_showToken,
-                    enableSuggestions: false,
-                    autocorrect: false,
-                    decoration: InputDecoration(
-                      labelText: 'Token',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _showToken ? Icons.visibility : Icons.visibility_off,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            key: const ValueKey('server_port'),
+                            controller: _port,
+                            keyboardType: TextInputType.number,
+                            style: _controlTextStyle(),
+                            decoration: _compactDecoration('Port'),
+                          ),
                         ),
-                        onPressed: () =>
-                            setState(() => _showToken = !_showToken),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: const ValueKey('server_token'),
+                      controller: _token,
+                      obscureText: !_showToken,
+                      enableSuggestions: false,
+                      autocorrect: false,
+                      style: _controlTextStyle(),
+                      decoration: _compactDecoration(
+                        'Token',
+                        suffixIcon: IconButton(
+                          visualDensity: VisualDensity.compact,
+                          icon: Icon(
+                            _showToken
+                                ? Icons.visibility
+                                : Icons.visibility_off,
+                            size: 18,
+                          ),
+                          onPressed: () =>
+                              setState(() => _showToken = !_showToken),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Transport',
-                      style: Theme.of(context).textTheme.titleSmall,
+                    const SizedBox(height: 12),
+                    _sectionTitle('Transport'),
+                    const SizedBox(height: 6),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            key: const ValueKey('server_protocol'),
+                            initialValue: _protocol,
+                            isExpanded: true,
+                            style: _controlTextStyle(),
+                            decoration: _compactDecoration('Protocol'),
+                            items: _protocols
+                                .map(
+                                  (p) => DropdownMenuItem(
+                                    value: p,
+                                    child: Text(_protocolLabel(p)),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) =>
+                                setState(() => _protocol = v ?? 'tcp'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: _tcpMuxControl()),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<String>(
-                    initialValue: _protocol,
-                    decoration: const InputDecoration(
-                      labelText: 'Protocol',
-                      border: OutlineInputBorder(),
+                    const SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _intervalField(
+                            key: const ValueKey('server_heartbeat_interval'),
+                            label: 'Heartbeat',
+                            value: _heartbeatInterval,
+                            onChanged: (v) => _heartbeatInterval = v,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: _intervalField(
+                            key: const ValueKey('server_heartbeat_timeout'),
+                            label: 'Timeout',
+                            value: _heartbeatTimeout,
+                            onChanged: (v) => _heartbeatTimeout = v,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: _intervalField(
+                            key: const ValueKey('server_keepalive'),
+                            label: 'Keepalive',
+                            value: _keepalive,
+                            onChanged: (v) => _keepalive = v,
+                          ),
+                        ),
+                      ],
                     ),
-                    items: _protocols
-                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _protocol = v ?? 'tcp'),
-                  ),
-                  const SizedBox(height: 8),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('TCP Multiplexing (tcpMux)'),
-                    value: _tcpMux,
-                    onChanged: (v) => setState(() => _tcpMux = v),
-                  ),
-                  _intervalRow(
-                    'Heartbeat Interval (s)',
-                    _heartbeatInterval,
-                    (v) => _heartbeatInterval = v,
-                  ),
-                  _intervalRow(
-                    'Heartbeat Timeout (s)',
-                    _heartbeatTimeout,
-                    (v) => _heartbeatTimeout = v,
-                  ),
-                  _intervalRow(
-                    'tcpMux Keepalive (s)',
-                    _keepalive,
-                    (v) => _keepalive = v,
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    _securityExpansionHeader(),
+                    if (_securityExpanded) ...[
+                      const SizedBox(height: 8),
+                      _tlsEnabledControl(),
+                      if (_tlsEnabled) ...[
+                        const SizedBox(height: 8),
+                        _securityTextField(
+                          key: const ValueKey('server_tls_server_name'),
+                          controller: _tlsServerName,
+                          label: 'TLS Server Name (optional)',
+                          hint: 'frps.example.com',
+                        ),
+                        const SizedBox(height: 8),
+                        _certificateIdentityControl(),
+                      ],
+                    ],
+                  ],
+                ),
               ),
             ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: _saving ? null : () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 4),
+                FilledButton.tonal(
+                  onPressed: _saving ? null : _save,
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String title) {
+    return Text(
+      title,
+      style: Theme.of(context).textTheme.labelLarge
+          ?.copyWith(fontWeight: FontWeight.w600),
+    );
+  }
+
+  InputDecoration _compactDecoration(
+    String label, {
+    String? hint,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      suffixIcon: suffixIcon,
+      isDense: true,
+      constraints: const BoxConstraints.tightFor(height: _controlHeight),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+      labelStyle: const TextStyle(fontSize: _controlFontSize),
+      floatingLabelStyle: const TextStyle(fontSize: _controlFontSize),
+      hintStyle: const TextStyle(fontSize: _controlFontSize),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+    );
+  }
+
+  TextStyle _controlTextStyle({String? fontFamily}) {
+    return (Theme.of(context).textTheme.bodyMedium ?? const TextStyle())
+        .copyWith(fontSize: _controlFontSize, fontFamily: fontFamily);
+  }
+
+  Widget _tcpMuxControl() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: const ValueKey('server_tcp_mux_control'),
+      constraints: const BoxConstraints.tightFor(height: _controlHeight),
+      padding: const EdgeInsets.only(left: 11, right: 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: scheme.outline),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'tcpMux',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: _controlTextStyle(),
+            ),
           ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              TextButton(onPressed: () => _save(), child: const Text('Save')),
-            ],
+          Transform.scale(
+            scale: 0.82,
+            child: Switch(
+              key: const ValueKey('server_tcp_mux'),
+              value: _tcpMux,
+              onChanged: (v) => setState(() => _tcpMux = v),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _intervalRow(String label, int value, ValueChanged<int> onChanged) {
-    return Row(
+  Widget _securityExpansionHeader() {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      key: const ValueKey('server_bidirectional_verification'),
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => setState(() => _securityExpanded = !_securityExpanded),
+      child: Container(
+        height: _controlHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 11),
+        decoration: BoxDecoration(
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              _tlsEnabled
+                  ? Icons.verified_user_outlined
+                  : Icons.shield_outlined,
+              size: 18,
+              color: _tlsEnabled ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Bidirectional Verification',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _controlTextStyle(),
+              ),
+            ),
+            Icon(
+              _securityExpanded ? Icons.expand_less : Icons.expand_more,
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tlsEnabledControl() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: const ValueKey('server_tls_enabled_control'),
+      height: _controlHeight,
+      padding: const EdgeInsets.only(left: 11, right: 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: scheme.outline),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text('Enable Mutual TLS', style: _controlTextStyle()),
+          ),
+          Transform.scale(
+            scale: 0.82,
+            child: Switch(
+              key: const ValueKey('server_tls_enabled'),
+              value: _tlsEnabled,
+              onChanged: (value) => setState(() => _tlsEnabled = value),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _securityTextField({
+    required Key key,
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+  }) {
+    return TextField(
+      key: key,
+      controller: controller,
+      autocorrect: false,
+      enableSuggestions: false,
+      style: _controlTextStyle(),
+      decoration: _compactDecoration(label, hint: hint),
+    );
+  }
+
+  Widget _certificateIdentityControl() {
+    final scheme = Theme.of(context).colorScheme;
+    if (_certificatesLoading) {
+      return Container(
+        key: const ValueKey('server_tls_identity_loading'),
+        height: _controlHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 11),
+        decoration: BoxDecoration(
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Loading certificate identities…',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _controlTextStyle(),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final hasReadyIdentity = _certificateIdentities.any(
+      (identity) => identity.isReady,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
+        DropdownButtonFormField<String>(
+          key: const ValueKey('server_tls_identity'),
+          initialValue: _certificateIdentitySelection,
+          isExpanded: true,
+          style: _controlTextStyle(),
+          decoration: _compactDecoration(
+            'Certificate Identity *',
+            hint: hasReadyIdentity ? 'Select an identity' : 'No ready identity',
+            suffixIcon: _certificateLoadError == null
+                ? null
+                : IconButton(
+                    key: const ValueKey('server_tls_identity_retry'),
+                    tooltip: 'Reload certificates',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _loadCertificateIdentities,
+                    icon: const Icon(Icons.refresh, size: 18),
+                  ),
+          ),
+          items: [
+            ..._certificateIdentities.map(
+              (identity) => DropdownMenuItem(
+                value: identity.id,
+                enabled: identity.isReady,
+                child: Text(
+                  identity.isReady
+                      ? identity.selectionLabel
+                      : '${identity.selectionLabel} · Not ready',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: _controlTextStyle().copyWith(
+                    color: identity.isReady ? null : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          onChanged: hasReadyIdentity ? _selectCertificateIdentity : null,
         ),
-        DropdownButton<int>(
-          value: value,
-          items: _intervals
-              .map((v) => DropdownMenuItem(value: v, child: Text('$v')))
-              .toList(),
-          onChanged: (v) => setState(() => onChanged(v ?? value)),
-        ),
+        if (_certificateLoadError != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            '$_certificateLoadError. Tap refresh to retry.',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.error),
+          ),
+        ] else if (!hasReadyIdentity) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Complete an identity in Certificate Management first.',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
       ],
     );
   }
+
+  Widget _intervalField({
+    required Key key,
+    required String label,
+    required int value,
+    required ValueChanged<int> onChanged,
+  }) {
+    final options = <int>{..._intervals, value}.toList()..sort();
+    return DropdownButtonFormField<int>(
+      key: key,
+      initialValue: value,
+      isExpanded: true,
+      style: _controlTextStyle(),
+      decoration: _compactDecoration(label),
+      items: options
+          .map(
+            (interval) => DropdownMenuItem(
+              value: interval,
+              child: Text(interval < 0 ? 'Off' : '${interval}s'),
+            ),
+          )
+          .toList(),
+      onChanged: (v) {
+        if (v == null) return;
+        setState(() => onChanged(v));
+      },
+    );
+  }
+
+  String _protocolLabel(String protocol) =>
+      protocol == 'websocket' ? 'WS' : protocol.toUpperCase();
 }
 
 class _MenuAction extends StatelessWidget {
@@ -925,9 +1490,8 @@ class _MenuAction extends StatelessWidget {
             const SizedBox(width: 12),
             Text(
               label,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: color),
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: color),
             ),
           ],
         ),
