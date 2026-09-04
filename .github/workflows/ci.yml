@@ -106,7 +106,7 @@ jobs:
 
       - name: Compile Android integration tests
         run: >-
-          ./android/gradlew -p android app:assembleDebugAndroidTest
+          ./android/gradlew -p android app:assembleDebug app:assembleDebugAndroidTest
           -Pfrp.integrationTestAbi=x86_64 --no-daemon
 
       - name: Install Android API 35 emulator
@@ -210,9 +210,27 @@ jobs:
           "$adb" -s "$ANDROID_SERIAL" shell settings put global window_animation_scale 0
           "$adb" -s "$ANDROID_SERIAL" shell settings put global transition_animation_scale 0
           "$adb" -s "$ANDROID_SERIAL" shell settings put global animator_duration_scale 0
-          ./scripts/build_frpc_test_stub_android.sh
-          ./flutter_app/android/gradlew -p flutter_app/android connectedDebugAndroidTest \
-            -Pfrp.integrationTestAbi=x86_64 --no-daemon
+
+          app_apk="flutter_app/build/app/outputs/apk/debug/app-debug.apk"
+          test_apk="flutter_app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+          test -f "$app_apk"
+          test -f "$test_apk"
+          "$adb" -s "$ANDROID_SERIAL" install -r -t -g "$app_apk"
+          "$adb" -s "$ANDROID_SERIAL" install -r -t -g "$test_apk"
+
+          instrumentation_log="$RUNNER_TEMP/frp-instrumentation.txt"
+          set +e
+          "$adb" -s "$ANDROID_SERIAL" shell am instrument -w -r \
+            com.frp.frp_app.debug.test/androidx.test.runner.AndroidJUnitRunner \
+            | tee "$instrumentation_log"
+          instrumentation_rc=${PIPESTATUS[0]}
+          set -e
+          if (( instrumentation_rc != 0 )) || \
+              ! grep -Eq '^OK \(40 tests\)$' "$instrumentation_log"; then
+            printf 'Android instrumentation failed with adb status %d.\n' \
+              "$instrumentation_rc" >&2
+            exit 1
+          fi
 
       - name: Build unsigned API 28+ Release APK
         env:
