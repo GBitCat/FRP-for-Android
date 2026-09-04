@@ -1,11 +1,47 @@
 import '../models/frp_config.dart';
 import '../models/server_config.dart';
 
-String _tomlString(String value) => value
-    .replaceAll(r'\', r'\\')
-    .replaceAll('"', r'\"')
-    .replaceAll('\n', r'\n')
-    .replaceAll('\r', r'\r');
+String _tomlString(String value) {
+  final escaped = StringBuffer();
+  for (final rune in value.runes) {
+    switch (rune) {
+      case 0x08:
+        escaped.write(r'\b');
+        break;
+      case 0x09:
+        escaped.write(r'\t');
+        break;
+      case 0x0A:
+        escaped.write(r'\n');
+        break;
+      case 0x0C:
+        escaped.write(r'\f');
+        break;
+      case 0x0D:
+        escaped.write(r'\r');
+        break;
+      case 0x22:
+        escaped.write(r'\"');
+        break;
+      case 0x5C:
+        escaped.write(r'\\');
+        break;
+      default:
+        if (rune <= 0x1F || rune == 0x7F) {
+          escaped
+            ..write(r'\u')
+            ..write(rune.toRadixString(16).toUpperCase().padLeft(4, '0'));
+        } else {
+          escaped.writeCharCode(rune);
+        }
+    }
+  }
+  return escaped.toString();
+}
+
+/// Quotes one value as a TOML basic string using the same escaping rules as
+/// every generated frpc block.
+String quotedTomlString(String value) => '"${_tomlString(value)}"';
 
 /// 单个配置的 frpc 块（visitor/server 均按原 ConfigGenerator 输出）
 String configBlock(FrpConfig c) {
@@ -120,6 +156,19 @@ String globalBlock(ServerConfig server) {
   b.writeln(
     'transport.tcpMuxKeepaliveInterval = ${server.tcpMuxKeepaliveInterval}',
   );
+  if (server.tlsEnabled) {
+    b.writeln('transport.tls.enable = true');
+    b.writeln('transport.tls.certFile = "${_tomlString(server.tlsCertFile)}"');
+    b.writeln('transport.tls.keyFile = "${_tomlString(server.tlsKeyFile)}"');
+    b.writeln(
+      'transport.tls.trustedCaFile = "${_tomlString(server.tlsTrustedCaFile)}"',
+    );
+    if (server.tlsServerName.isNotEmpty) {
+      b.writeln(
+        'transport.tls.serverName = "${_tomlString(server.tlsServerName)}"',
+      );
+    }
+  }
   b.writeln();
   return b.toString();
 }

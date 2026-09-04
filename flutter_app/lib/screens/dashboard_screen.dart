@@ -1,10 +1,26 @@
 import 'package:flutter/material.dart';
 
 import '../models/connection_status.dart';
+import '../services/config_domain_service.dart';
 import '../state/app_state.dart';
 import '../widgets/app_card.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/glass_sliver_appbar.dart';
+
+Future<void> _runDashboardAction(
+  BuildContext context,
+  Future<void> Function() action,
+  String failureMessage,
+) async {
+  try {
+    await action();
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(failureMessage)));
+    }
+  }
+}
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -53,9 +69,13 @@ class DashboardScreen extends StatelessWidget {
                         color: Theme.of(context).colorScheme.primary,
                       )
                     : null,
-                onTap: () {
-                  state.selectServer(s.serverId);
+                onTap: () async {
                   Navigator.pop(dialogContext);
+                  await _runDashboardAction(
+                    context,
+                    () => state.selectServer(s.serverId),
+                    'Unable to switch server',
+                  );
                 },
               );
             }),
@@ -72,6 +92,11 @@ class DashboardScreen extends StatelessWidget {
       listenable: state,
       builder: (context, _) {
         final server = state.effectiveServer;
+        final appRows = ConfigDomainService.buildAppRowsForServer(
+          state.configs,
+          state.appStatuses,
+          server.serverId,
+        );
         final scheme = Theme.of(context).colorScheme;
 
         return CustomScrollView(
@@ -137,9 +162,16 @@ class DashboardScreen extends StatelessWidget {
                             ),
                             const Spacer(),
                             Switch(
-                              value: state.running,
-                              onChanged: (v) =>
-                                  v ? state.start() : state.stop(),
+                              value: state.runRequested,
+                              onChanged: (v) async {
+                                await _runDashboardAction(
+                                  context,
+                                  v ? state.start : state.stop,
+                                  v
+                                      ? 'Unable to start frpc'
+                                      : 'Unable to stop frpc',
+                                );
+                              },
                             ),
                           ],
                         ),
@@ -177,7 +209,7 @@ class DashboardScreen extends StatelessWidget {
                   AppCard(
                     leading: const Icon(Icons.apps_outlined),
                     title: 'Applications',
-                    child: state.configs.isEmpty
+                    child: appRows.isEmpty
                         ? Text(
                             'No apps',
                             style: Theme.of(context).textTheme.bodyMedium
@@ -187,7 +219,7 @@ class DashboardScreen extends StatelessWidget {
                             constraints: const BoxConstraints(maxHeight: 108),
                             child: SingleChildScrollView(
                               child: Column(
-                                children: state.buildAppRows().map((row) {
+                                children: appRows.map((row) {
                                   final type = row.status;
                                   return Padding(
                                     padding: const EdgeInsets.symmetric(
@@ -200,9 +232,9 @@ class DashboardScreen extends StatelessWidget {
                                             row.name,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.bodyMedium,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium,
                                           ),
                                         ),
                                         StatusDot(_statusColor(context, type)),
@@ -256,19 +288,15 @@ class _IpAddressCard extends StatelessWidget {
           Text('IPv4', style: Theme.of(context).textTheme.labelSmall),
           Text(
             ipv4.isEmpty ? 'No network connection' : ipv4,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              fontFamily: 'monospace',
-              color: scheme.onSurface,
-            ),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(fontFamily: 'monospace', color: scheme.onSurface),
           ),
           const SizedBox(height: 8),
           Text('IPv6', style: Theme.of(context).textTheme.labelSmall),
           Text(
             ipv6.isEmpty ? 'No network connection' : ipv6,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              fontFamily: 'monospace',
-              color: scheme.onSurface,
-            ),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(fontFamily: 'monospace', color: scheme.onSurface),
           ),
         ],
       ),
@@ -298,9 +326,8 @@ class _MemoryCard extends StatelessWidget {
             children: [
               Text(
                 '${mb.round()} MB',
-                style: Theme.of(
-                  context,
-                ).textTheme.headlineSmall?.copyWith(color: scheme.primary),
+                style: Theme.of(context).textTheme.headlineSmall
+                    ?.copyWith(color: scheme.primary),
               ),
               const SizedBox(width: 6),
               Padding(

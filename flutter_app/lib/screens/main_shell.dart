@@ -6,6 +6,7 @@ import '../services/frp_engine.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/glass_bottom_nav.dart';
 import 'config_edit_screen.dart';
+import 'certificate_management_screen.dart';
 import 'configs_screen.dart';
 import 'dashboard_screen.dart';
 import 'manual_config_edit_screen.dart';
@@ -27,7 +28,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     // 支持通过 Intent 指定初始 Tab（实机截图/测试用）
     FrpEngine.instance.getInitialTab().then((t) {
-      if (mounted && t >= 0 && t <= 2) {
+      if (mounted && t >= 0 && t <= 3) {
         setState(() => _selectedTab = t);
       }
     });
@@ -140,9 +141,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
             _MenuOption(
               icon: Icons.tune_outlined,
               iconColor: Theme.of(context).colorScheme.secondaryContainer,
-              iconForeground: Theme.of(
-                context,
-              ).colorScheme.onSecondaryContainer,
+              iconForeground: Theme.of(context)
+                  .colorScheme
+                  .onSecondaryContainer,
               title: 'visitor.FormConfig',
               subtitle: 'Create a configuration with guided fields',
               onTap: () {
@@ -214,6 +215,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
             label: 'Configs',
           ),
           BottomNavigationBarItem(
+            icon: Icon(Icons.workspace_premium_outlined),
+            activeIcon: Icon(Icons.workspace_premium),
+            label: 'Certificates',
+          ),
+          BottomNavigationBarItem(
             icon: Icon(Icons.settings_outlined),
             activeIcon: Icon(Icons.settings),
             label: 'Settings',
@@ -247,6 +253,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           child: switch (_selectedTab) {
             0 => const DashboardScreen(),
             1 => const ConfigsScreen(),
+            2 => const CertificateManagementScreen(),
             _ => const SettingsScreen(),
           },
         ),

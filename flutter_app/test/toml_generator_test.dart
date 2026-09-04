@@ -16,6 +16,37 @@ void main() {
     expect(toml, contains('serverAddr = "frps.example.com"'));
     expect(toml, contains(r'auth.token = "quote\"slash\\line\nnext"'));
     expect(toml, contains('transport.tcpMux = true'));
+    expect(toml, isNot(contains('transport.tls.certFile')));
+  });
+
+  test('TOML basic strings escape every forbidden control character', () {
+    const controlServer = ServerConfig(
+      serverId: 'SERVER01',
+      token: 'a\b\t\f\u0001\u007f',
+    );
+
+    expect(
+      globalBlock(controlServer),
+      contains(r'auth.token = "a\b\t\f\u0001\u007F"'),
+    );
+  });
+
+  test('global TOML emits bidirectional TLS verification settings', () {
+    const tlsServer = ServerConfig(
+      serverAddr: 'frps.example.com',
+      tlsEnabled: true,
+      tlsServerName: 'secure.example.com',
+      tlsCertFile: '/data/client.crt',
+      tlsKeyFile: '/data/client.key',
+      tlsTrustedCaFile: '/data/ca.crt',
+    );
+
+    final toml = globalBlock(tlsServer);
+    expect(toml, contains('transport.tls.enable = true'));
+    expect(toml, contains('transport.tls.certFile = "/data/client.crt"'));
+    expect(toml, contains('transport.tls.keyFile = "/data/client.key"'));
+    expect(toml, contains('transport.tls.trustedCaFile = "/data/ca.crt"'));
+    expect(toml, contains('transport.tls.serverName = "secure.example.com"'));
   });
 
   test('TCP proxy emits local and remote ports', () {
