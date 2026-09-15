@@ -22,7 +22,7 @@ plugins {
     id("com.android.application") version "9.4.0" apply false
     // Pin a compatible KGP runtime for AGP's built-in Kotlin compiler. The
     // legacy Kotlin Android plugin is declared for resolution only, not applied.
-    id("org.jetbrains.kotlin.android") version "2.4.10" apply false
+    id("org.jetbrains.kotlin.android") version "2.4.20" apply false
 }
 
 include(":app")
