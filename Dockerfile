@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM ubuntu:26.04@sha256:7c274af287d8f66f861d90e6ceab5cc27349b8db1fea54d44fc2bb6442210c8b
+FROM ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
 
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
