@@ -11,6 +11,7 @@ import '../services/frp_engine.dart';
 import '../services/sensitive_file_cache.dart';
 import '../state/app_state.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_dropdown_field.dart';
 import '../widgets/glass_sliver_appbar.dart';
 import 'logs_screen.dart';
 
@@ -314,38 +315,29 @@ class SettingsScreen extends StatelessWidget {
                         ListTile(
                           leading: const Icon(Icons.brightness_6_outlined),
                           title: const Text('Theme mode'),
-                          subtitle: InputDecorator(
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                            ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<ThemeMode>(
-                                value: state.theme.mode,
-                                isExpanded: true,
-                                isDense: true,
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: ThemeMode.system,
-                                    child: Text('System'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: ThemeMode.light,
-                                    child: Text('Light'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: ThemeMode.dark,
-                                    child: Text('Dark'),
-                                  ),
-                                ],
-                                onChanged: (m) async {
-                                  if (m == null) return;
-                                  await _applySetting(
-                                    context,
-                                    () => appState.setThemeMode(m),
-                                  );
-                                },
+                          subtitle: AppDropdownButtonFormField<ThemeMode>(
+                            initialValue: state.theme.mode,
+                            items: const [
+                              DropdownMenuItem(
+                                value: ThemeMode.system,
+                                child: Text('System'),
                               ),
-                            ),
+                              DropdownMenuItem(
+                                value: ThemeMode.light,
+                                child: Text('Light'),
+                              ),
+                              DropdownMenuItem(
+                                value: ThemeMode.dark,
+                                child: Text('Dark'),
+                              ),
+                            ],
+                            onChanged: (m) async {
+                              if (m == null) return;
+                              await _applySetting(
+                                context,
+                                () => appState.setThemeMode(m),
+                              );
+                            },
                           ),
                         ),
                         ListTile(

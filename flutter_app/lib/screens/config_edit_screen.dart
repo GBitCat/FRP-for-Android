@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../models/frp_config.dart';
 import '../models/server_config.dart';
+import '../models/socks5_config.dart';
 import '../services/config_domain_service.dart';
 import '../services/config_validator.dart';
 import '../services/port_mapping_parser.dart';
@@ -9,11 +12,14 @@ import '../services/secure_clipboard.dart';
 import '../services/toml_generator.dart' as toml;
 import '../state/app_state.dart';
 import '../widgets/frosted_dialog.dart';
+import '../widgets/app_dropdown_field.dart';
+import '../widgets/editor_card.dart';
 
 class ConfigEditScreen extends StatefulWidget {
   final int? configId;
+  final bool asDialog;
 
-  const ConfigEditScreen({super.key, this.configId});
+  const ConfigEditScreen({super.key, this.configId, this.asDialog = false});
 
   @override
   State<ConfigEditScreen> createState() => _ConfigEditScreenState();
@@ -34,6 +40,9 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
 
   bool _showSecretKey = false;
   bool _saving = false;
+  bool _allowPop = false;
+  bool _confirmingClose = false;
+  late String _initialDraft;
   bool _useEncryption = false;
   bool _useCompression = false;
   bool _useFallback = false;
@@ -71,6 +80,40 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
       if (selected != null) _initializeExisting(selected);
     }
     _initializeControllers();
+    _initialDraft = _draftSnapshot();
+  }
+
+  String _draftSnapshot() => jsonEncode([
+    _serverId,
+    _name,
+    _groupName,
+    _serverName,
+    _bindAddr,
+    _secretKey,
+    _protocolPorts,
+    _useEncryption,
+    _useCompression,
+    _useFallback,
+  ]);
+
+  bool get _dirty => _draftSnapshot() != _initialDraft;
+
+  Future<void> _requestClose() async {
+    if (_saving || _confirmingClose) return;
+    if (!_dirty) {
+      Navigator.pop(context);
+      return;
+    }
+    _confirmingClose = true;
+    final action = await confirmUnsavedEditorChanges(context);
+    _confirmingClose = false;
+    if (!mounted) return;
+    if (action == UnsavedEditorAction.save) {
+      await _save();
+    } else if (action == UnsavedEditorAction.discard) {
+      setState(() => _allowPop = true);
+      Navigator.pop(context);
+    }
   }
 
   void _initializeControllers() {
@@ -323,6 +366,16 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
   }) {
     final config = original ?? const FrpConfig();
     return config.copyWith(
+      enabled:
+          original?.enabled ??
+          (!_isEditing || _originalSources.every((source) => source.enabled)),
+      socks5: _socks5ForCurrentProtocols(
+        original?.socks5 ??
+            _originalSources
+                .map((source) => source.socks5)
+                .whereType<Socks5Config>()
+                .firstOrNull,
+      ),
       name: _generatedValue(
         _name,
         protocol,
@@ -355,6 +408,17 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
       groupName: _groupName,
       manualToml: null,
     );
+  }
+
+  Socks5Config? _socks5ForCurrentProtocols(Socks5Config? value) {
+    if (value == null) return null;
+    final tcp = _protocolPorts.keys.any(
+      (type) => type == 'stcp' || type == 'xtcp',
+    );
+    final udp = _protocolPorts.keys.any(
+      (type) => type == 'sudp' || type == 'xudp',
+    );
+    return value.retainProtocols(tcp: tcp, udp: udp);
   }
 
   int _allocateSudpBindPort(int primaryPort, Set<int> occupiedUdpPorts) {
@@ -593,7 +657,15 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
           ? 'Configuration group saved (${replacements.length} configs)'
           : (_isEditing ? 'Configuration updated' : 'Configuration added'),
     );
-    Navigator.pop(context);
+    final savedConfig = appState.configs
+        .where(
+          (config) =>
+              config.serverId == _effectiveServerId &&
+              config.name == replacements.first.name,
+        )
+        .firstOrNull;
+    setState(() => _allowPop = true);
+    Navigator.pop(context, savedConfig?.id);
   }
 
   String _generatePreview() {
@@ -604,15 +676,32 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
       );
     }
     final collection = _collectConfigSet();
-    final preview = StringBuffer(
-      toml.generateServerPreview(_previewServer, collection.configs),
-    );
-    if (collection.errors.isNotEmpty) {
+    // Saving assigns every generated source and fallback to the same group.
+    // New draft entries do not have that group ID yet, so normalize their
+    // scope before planning shared SOCKS listeners and linked UDP fallbacks.
+    // The temporary ID is used only for this preview and is never persisted.
+    final previewGroupId = collection.entries.length > 1
+        ? (_originalGroupId > 0 ? _originalGroupId : 1)
+        : 0;
+    final configs = collection.configs
+        .map((config) => config.copyWith(groupId: previewGroupId))
+        .toList();
+    final errors = [...collection.errors];
+    final preview = StringBuffer();
+    try {
+      preview.write(toml.generateServerPreview(_previewServer, configs));
+    } on FormatException catch (error) {
+      // An invalid draft must remain editable. Save still validates the full
+      // runtime plan before committing any configuration changes.
+      preview.write(toml.globalBlock(_previewServer));
+      errors.add(error.message);
+    }
+    if (errors.isNotEmpty) {
       if (preview.isNotEmpty && !preview.toString().endsWith('\n')) {
         preview.writeln();
       }
       preview.writeln('# Incomplete configuration');
-      for (final error in collection.errors) {
+      for (final error in errors) {
         preview.writeln('# $error');
       }
     }
@@ -666,14 +755,11 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
     String? helper,
     Widget? suffixIcon,
   }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      helperText: helper,
+    return AppFormStyle.decoration(
+      label: label,
+      hint: hint,
+      helper: helper,
       suffixIcon: suffixIcon,
-      isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
     );
   }
 
@@ -806,305 +892,306 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
   @override
   Widget build(BuildContext context) {
     final previewText = _generatePreview();
-    return PopScope(
-      canPop: !_saving,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(_isEditing ? 'Edit Form Config' : 'Form Config'),
-          actions: [
-            TextButton(
-              onPressed: _hasUnsupportedConfigs || _saving ? null : _save,
-              child: const Text('Save'),
+    final formContent = SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionTitle(context, 'Basic Information'),
+          const SizedBox(height: 6),
+          AppDropdownButtonFormField<String>(
+            key: const ValueKey('server_selector'),
+            initialValue: _serverId,
+            isExpanded: true,
+            decoration: _compactDecoration('Belongs to Server'),
+            items: appState.servers
+                .map(
+                  (server) => DropdownMenuItem(
+                    value: server.serverId,
+                    child: Text(
+                      '${server.name.isEmpty ? "FRPS Server" : server.name} (${server.serverId})',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) => setState(() => _serverId = value ?? ''),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const ValueKey('group_name'),
+            controller: _ctrl('groupName'),
+            onChanged: (value) => setState(() => _groupName = value),
+            decoration: _compactDecoration(
+              'Group Name',
+              helper: 'Defaults to the primary protocol name when blank',
             ),
+          ),
+          const SizedBox(height: 12),
+          if (_hasUnsupportedConfigs) ...[
+            Material(
+              color: Theme.of(context).colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Text(
+                  'This existing group contains ${_unsupportedProtocols.join(', ')}. '
+                  'The grouped Form Config editor supports XTCP/XUDP visitors; '
+                  'the original configuration is preserved and shown below.',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
           ],
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Card(
-            key: const ValueKey('form_config_card'),
-            elevation: 2,
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+          _sectionTitle(context, 'Configuration'),
+          const SizedBox(height: 6),
+          TextField(
+            key: const ValueKey('config_name'),
+            controller: _ctrl('name'),
+            onChanged: (value) => setState(() => _name = value),
+            decoration: _compactDecoration(
+              'Name *',
+              hint: 'Application-Name',
+              helper: 'Protocol is appended automatically, e.g. Application-Name-xtcp',
             ),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _sectionTitle(context, 'Basic Information'),
-                  const SizedBox(height: 6),
-                  DropdownButtonFormField<String>(
-                    key: const ValueKey('server_selector'),
-                    initialValue: _serverId,
-                    isExpanded: true,
-                    decoration: _compactDecoration('Belongs to Server'),
-                    items: appState.servers
-                        .map(
-                          (server) => DropdownMenuItem(
-                            value: server.serverId,
-                            child: Text(
-                              '${server.name.isEmpty ? "FRPS Server" : server.name} (${server.serverId})',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) =>
-                        setState(() => _serverId = value ?? ''),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    key: const ValueKey('group_name'),
-                    controller: _ctrl('groupName'),
-                    onChanged: (value) => setState(() => _groupName = value),
-                    decoration: _compactDecoration(
-                      'Group Name',
-                      helper:
-                          'Defaults to the primary protocol name when blank',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (_hasUnsupportedConfigs) ...[
-                    Material(
-                      color: Theme.of(context).colorScheme.errorContainer,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Text(
-                          'This existing group contains ${_unsupportedProtocols.join(', ')}. '
-                          'The grouped Form Config editor supports XTCP/XUDP visitors; '
-                          'the original configuration is preserved and shown below.',
-                          style: TextStyle(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onErrorContainer,
-                          ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const ValueKey('server_proxy_name'),
+            controller: _ctrl('serverName'),
+            onChanged: (value) => setState(() => _serverName = value),
+            decoration: _compactDecoration(
+              'Server Name *',
+              hint: 'Server-Name',
+              helper: 'Uses the same protocol and multi-port suffix rule',
+            ),
+          ),
+          const SizedBox(height: 12),
+          _sectionTitle(context, 'Protocols'),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: AppDropdownButtonFormField<String>(
+                  key: const ValueKey('protocol_dropdown'),
+                  initialValue: _protocolToAdd,
+                  decoration: _compactDecoration('Protocol'),
+                  items: _formProtocols
+                      .map(
+                        (protocol) => DropdownMenuItem(
+                          value: protocol,
+                          child: Text(protocol.toUpperCase()),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  _sectionTitle(context, 'Configuration'),
-                  const SizedBox(height: 6),
-                  TextField(
-                    key: const ValueKey('config_name'),
-                    controller: _ctrl('name'),
-                    onChanged: (value) => setState(() => _name = value),
-                    decoration: _compactDecoration(
-                      'Name *',
-                      hint: 'Application-Name',
-                      helper: 'Protocol is appended automatically, e.g. Application-Name-xtcp',
-                    ),
+                      )
+                      .toList(),
+                  onChanged: (protocol) => setState(() {
+                    if (protocol != null) _protocolToAdd = protocol;
+                  }),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                key: const ValueKey('add_protocol'),
+                tooltip: 'Add protocol',
+                onPressed: _addProtocol,
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _protocolPorts.isEmpty
+                      ? 'Add XTCP, XUDP, or both to this group.'
+                      : 'Each protocol accepts comma-separated ports or ranges.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    key: const ValueKey('server_proxy_name'),
-                    controller: _ctrl('serverName'),
-                    onChanged: (value) => setState(() => _serverName = value),
-                    decoration: _compactDecoration(
-                      'Server Name *',
-                      hint: 'Server-Name',
-                      helper:
-                          'Uses the same protocol and multi-port suffix rule',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _sectionTitle(context, 'Protocols'),
-                  const SizedBox(height: 6),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          key: const ValueKey('protocol_dropdown'),
-                          initialValue: _protocolToAdd,
-                          decoration: _compactDecoration('Protocol'),
-                          items: _formProtocols
-                              .map(
-                                (protocol) => DropdownMenuItem(
-                                  value: protocol,
-                                  child: Text(protocol.toUpperCase()),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (protocol) => setState(() {
-                            if (protocol != null) _protocolToAdd = protocol;
-                          }),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filledTonal(
-                        key: const ValueKey('add_protocol'),
-                        tooltip: 'Add protocol',
-                        onPressed: _addProtocol,
-                        icon: const Icon(Icons.add),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _protocolPorts.isEmpty
-                              ? 'Add XTCP, XUDP, or both to this group.'
-                              : 'Each protocol accepts comma-separated ports or ranges.',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                      ),
-                      Text(
-                        '${_protocolPorts.length}',
-                        key: const ValueKey('protocol_count'),
-                        style: Theme.of(context).textTheme.labelMedium,
-                      ),
-                    ],
-                  ),
-                  for (final protocol in _protocolPorts.keys)
-                    _protocolCard(context, protocol),
-                  const SizedBox(height: 10),
-                  TextField(
-                    key: const ValueKey('bind_address'),
-                    controller: _ctrl('bindAddr'),
-                    onChanged: (value) => setState(() => _bindAddr = value),
-                    decoration: _compactDecoration('Bind Address'),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    key: const ValueKey('secret_key'),
-                    controller: _ctrl('secretKey'),
-                    onChanged: (value) => setState(() => _secretKey = value),
-                    obscureText: !_showSecretKey,
-                    enableSuggestions: false,
-                    autocorrect: false,
-                    decoration: _compactDecoration(
-                      'Secret Key *',
-                      hint: 'Shared secret for all protocols in this group',
-                      suffixIcon: IconButton(
-                        visualDensity: VisualDensity.compact,
-                        icon: Icon(
-                          _showSecretKey
-                              ? Icons.visibility
-                              : Icons.visibility_off,
-                        ),
-                        onPressed: () =>
-                            setState(() => _showSecretKey = !_showSecretKey),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _compactSwitch(
-                          context,
-                          title: 'Encryption',
-                          value: _useEncryption,
-                          onChanged: (value) =>
-                              setState(() => _useEncryption = value),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _compactSwitch(
-                          context,
-                          title: 'Compression',
-                          value: _useCompression,
-                          onChanged: (value) =>
-                              setState(() => _useCompression = value),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_supportsFallback) ...[
-                    const SizedBox(height: 4),
-                    _compactSwitch(
-                      context,
-                      title: 'Fallback',
-                      subtitle: 'Automatically generate STCP from XTCP and SUDP from XUDP',
-                      value: _useFallback,
-                      onChanged: (value) =>
-                          setState(() => _useFallback = value),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  if (_protocolPorts.isNotEmpty && !_hasUnsupportedConfigs) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        key: const ValueKey('derive_peer_config'),
-                        onPressed: _showPeerConfigDialog,
-                        icon: const Icon(Icons.copy, size: 16),
-                        label: const Text('Derive Peer Config'),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  Card(
-                    margin: EdgeInsets.zero,
-                    elevation: 0,
-                    clipBehavior: Clip.antiAlias,
-                    color: Theme.of(context).colorScheme.surfaceContainerLow,
-                    child: ExpansionTile(
-                      key: const ValueKey('configuration_preview'),
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-                      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                      title: Text(
-                        'Configuration Preview',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            previewText,
-                            key: const ValueKey('configuration_preview_text'),
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 11,
-                              height: 1.25,
-                            ),
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton.icon(
-                            key: const ValueKey('copy_configuration_preview'),
-                            onPressed: () async {
-                              try {
-                                await SecureClipboard.copy(previewText);
-                                if (mounted) {
-                                  _toast(
-                                    'Configuration copied; clipboard clears in 60s',
-                                  );
-                                }
-                              } catch (_) {
-                                if (mounted) {
-                                  _toast('Unable to copy configuration');
-                                }
-                              }
-                            },
-                            icon: const Icon(Icons.copy, size: 16),
-                            label: const Text('Copy'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
+              ),
+              Text(
+                '${_protocolPorts.length}',
+                key: const ValueKey('protocol_count'),
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ],
+          ),
+          for (final protocol in _protocolPorts.keys)
+            _protocolCard(context, protocol),
+          const SizedBox(height: 10),
+          TextField(
+            key: const ValueKey('bind_address'),
+            controller: _ctrl('bindAddr'),
+            onChanged: (value) => setState(() => _bindAddr = value),
+            decoration: _compactDecoration('Bind Address'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const ValueKey('secret_key'),
+            controller: _ctrl('secretKey'),
+            onChanged: (value) => setState(() => _secretKey = value),
+            obscureText: !_showSecretKey,
+            enableSuggestions: false,
+            autocorrect: false,
+            decoration: _compactDecoration(
+              'Secret Key *',
+              hint: 'Shared secret for all protocols in this group',
+              suffixIcon: IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  _showSecretKey ? Icons.visibility : Icons.visibility_off,
+                ),
+                onPressed: () =>
+                    setState(() => _showSecretKey = !_showSecretKey),
               ),
             ),
           ),
-        ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _compactSwitch(
+                  context,
+                  title: 'Encryption',
+                  value: _useEncryption,
+                  onChanged: (value) => setState(() => _useEncryption = value),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _compactSwitch(
+                  context,
+                  title: 'Compression',
+                  value: _useCompression,
+                  onChanged: (value) => setState(() => _useCompression = value),
+                ),
+              ),
+            ],
+          ),
+          if (_supportsFallback) ...[
+            const SizedBox(height: 4),
+            _compactSwitch(
+              context,
+              title: 'Fallback',
+              subtitle:
+                  'Automatically generate STCP from XTCP and SUDP from XUDP',
+              value: _useFallback,
+              onChanged: (value) => setState(() => _useFallback = value),
+            ),
+          ],
+          const SizedBox(height: 12),
+          if (_protocolPorts.isNotEmpty && !_hasUnsupportedConfigs) ...[
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: const ValueKey('derive_peer_config'),
+                onPressed: _showPeerConfigDialog,
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('Derive Peer Config'),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Card(
+            margin: EdgeInsets.zero,
+            elevation: 0,
+            clipBehavior: Clip.antiAlias,
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+            child: ExpansionTile(
+              key: const ValueKey('configuration_preview'),
+              dense: true,
+              visualDensity: VisualDensity.compact,
+              tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+              childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              title: Text(
+                'Configuration Preview',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    previewText,
+                    key: const ValueKey('configuration_preview_text'),
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    key: const ValueKey('copy_configuration_preview'),
+                    onPressed: () async {
+                      try {
+                        await SecureClipboard.copy(previewText);
+                        if (mounted) {
+                          _toast(
+                            'Configuration copied; clipboard clears in 60s',
+                          );
+                        }
+                      } catch (_) {
+                        if (mounted) {
+                          _toast('Unable to copy configuration');
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.copy, size: 16),
+                    label: const Text('Copy'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
+    );
+    return PopScope(
+      canPop: !_saving && (!_dirty || _allowPop),
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _requestClose();
+      },
+      child: widget.asDialog
+          ? EditorCard(
+              key: const ValueKey('form_config_card'),
+              title: _isEditing ? 'Edit Config' : 'Config',
+              onClose: _requestClose,
+              onSave: _hasUnsupportedConfigs ? null : _save,
+              saving: _saving,
+              child: formContent,
+            )
+          : Scaffold(
+              appBar: AppBar(
+                title: Text(_isEditing ? 'Edit Form Config' : 'Form Config'),
+                actions: [
+                  TextButton(
+                    onPressed: _hasUnsupportedConfigs || _saving ? null : _save,
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+              body: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Card(
+                  key: const ValueKey('form_config_card'),
+                  elevation: 2,
+                  clipBehavior: Clip.antiAlias,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: formContent,
+                ),
+              ),
+            ),
     );
   }
 

@@ -10,7 +10,11 @@ import '../services/certificates/certificate_models.dart';
 import '../services/config_domain_service.dart';
 import '../services/secure_clipboard.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_dropdown_field.dart';
+import '../services/socks5_runtime_plan.dart';
+import 'socks5_config_dialog.dart';
 import 'config_edit_screen.dart';
+import 'config_details_dialog.dart';
 import 'manual_config_edit_screen.dart';
 
 Future<bool> _runConfigMutation(
@@ -30,135 +34,257 @@ Future<bool> _runConfigMutation(
   }
 }
 
-class ConfigsScreen extends StatelessWidget {
+Future<void> _confirmConfigEnabled(
+  BuildContext context, {
+  required String name,
+  required bool enabled,
+  required Future<void> Function() apply,
+  required String failureMessage,
+}) async {
+  final action = enabled ? 'Enable' : 'Disable';
+  final confirmed = await showFrostedDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => Padding(
+      padding: const EdgeInsets.all(16),
+      child: FrostedCard(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$action Configuration',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              "$action '$name'?",
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  key: const ValueKey('config_toggle_cancel'),
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  key: const ValueKey('config_toggle_confirm'),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(action),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  await _runConfigMutation(context, apply, failureMessage);
+}
+
+class ConfigsScreen extends StatefulWidget {
   const ConfigsScreen({super.key});
 
-  Future<void> _openEdit(BuildContext context, {int? configId}) async {
+  @override
+  State<ConfigsScreen> createState() => _ConfigsScreenState();
+}
+
+class _ConfigsScreenState extends State<ConfigsScreen> {
+  bool _managing = false;
+
+  Future<int?> _openEdit(BuildContext context, {int? configId}) async {
     final cfg = configId == null
         ? null
         : appState.configs.where((e) => e.id == configId).firstOrNull;
-    if (cfg?.manualToml != null && cfg!.manualToml!.trim().isNotEmpty) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ManualConfigEditScreen(configId: configId),
-        ),
-      );
-      return;
-    }
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => ConfigEditScreen(configId: configId)),
+    final manual = cfg?.manualToml?.trim().isNotEmpty ?? false;
+    return showFrostedDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => manual
+          ? ManualConfigEditScreen(configId: configId, asDialog: true)
+          : ConfigEditScreen(configId: configId, asDialog: true),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final state = appState;
-    return ListenableBuilder(
-      listenable: state,
-      builder: (context, _) {
-        final groups = state.buildGroups();
-        return CustomScrollView(
-          slivers: [
-            const GlassSliverAppBar(title: 'Configs'),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Servers (${state.servers.length})',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    ...state.servers.map(
-                      (s) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _ServerListItem(
-                          server: s,
-                          selected: state.isServerSelected(s.serverId),
-                          onSelect: () async {
-                            await _runConfigMutation(
-                              context,
-                              () => state.selectServer(s.serverId),
-                              'Unable to switch server',
-                            );
-                          },
-                          onPreview: () => _showServerPreview(context, s),
-                          onEdit: () => _showServerEdit(context, initial: s),
-                          onDelete: () => _confirmDeleteServer(context, s),
+    return PopScope(
+      canPop: !_managing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _managing) {
+          setState(() => _managing = false);
+        }
+      },
+      child: ListenableBuilder(
+        listenable: state,
+        builder: (context, _) {
+          final groups = state.buildGroups();
+          return CustomScrollView(
+            slivers: [
+              const GlassSliverAppBar(title: 'Configs'),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Servers (${state.servers.length})',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      ...state.servers.map(
+                        (s) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _ServerListItem(
+                            server: s,
+                            selected: state.isServerSelected(s.serverId),
+                            onSelect: () async {
+                              await _runConfigMutation(
+                                context,
+                                () => state.selectServer(s.serverId),
+                                'Unable to switch server',
+                              );
+                            },
+                            onPreview: () => _showServerPreview(context, s),
+                            onEdit: () => _showServerEdit(context, initial: s),
+                            onDelete: () => _confirmDeleteServer(context, s),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-            if (state.configs.isEmpty)
-              const SliverFillRemaining(
-                hasScrollBody: false,
-                child: _EmptyConfigs(),
-              )
-            else ...[
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Text(
-                    'Configurations (${state.configs.length})',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                sliver: SliverList(
-                  delegate: SliverChildListDelegate(
-                    groups.map((group) {
-                      if (group.isGroup) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: _ConfigGroupItem(
-                            group: group,
-                            onEdit: () =>
-                                _openEdit(context, configId: group.primary.id),
-                            onDelete: () => _confirmDeleteGroup(context, group),
-                            onOptions: () => _showItemMenu(
-                              context,
-                              onEdit: () => _openEdit(
-                                context,
-                                configId: group.primary.id,
-                              ),
-                              onDelete: () =>
-                                  _confirmDeleteGroup(context, group),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Configurations (${state.configs.length})',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.headlineSmall,
                             ),
                           ),
-                        );
-                      }
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _ConfigItem(
-                          config: group.primary,
-                          onEdit: () =>
-                              _openEdit(context, configId: group.primary.id),
-                          onDelete: () =>
-                              _confirmDelete(context, group.primary),
-                          onOptions: () => _showItemMenu(
-                            context,
-                            onEdit: () =>
-                                _openEdit(context, configId: group.primary.id),
-                            onDelete: () =>
-                                _confirmDelete(context, group.primary),
+                          TextButton.icon(
+                            key: const ValueKey('config_manage'),
+                            onPressed: state.configs.isEmpty && !_managing
+                                ? null
+                                : () => setState(() => _managing = !_managing),
+                            icon: Icon(
+                              _managing ? Icons.check : Icons.tune,
+                              size: 18,
+                            ),
+                            label: Text(_managing ? 'Done' : 'Manage'),
                           ),
+                        ],
+                      ),
+                      if (_managing)
+                        Text(
+                          'Swipe left to delete',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
                         ),
-                      );
-                    }).toList(),
+                    ],
                   ),
                 ),
               ),
+              if (state.configs.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _EmptyConfigs(),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                  sliver: SliverList(
+                    delegate: SliverChildListDelegate(
+                      groups
+                          .map((group) => _configurationRow(context, group))
+                          .toList(),
+                    ),
+                  ),
+                ),
             ],
-          ],
-        );
-      },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _configurationRow(BuildContext context, ConfigGroup group) {
+    final identity = group.isGroup
+        ? 'group_${group.groupId}'
+        : '${group.primary.id}';
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      key: ValueKey('config_row_$identity'),
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Dismissible(
+        key: ValueKey('config_swipe_$identity'),
+        direction: _managing
+            ? DismissDirection.endToStart
+            : DismissDirection.none,
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            color: scheme.errorContainer,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Icon(Icons.delete_outline, color: scheme.onErrorContainer),
+        ),
+        confirmDismiss: (_) async {
+          if (!_managing) return false;
+          if (group.isGroup) {
+            await _confirmDeleteGroup(context, group);
+          } else {
+            await _confirmDelete(context, group.primary);
+          }
+          if (mounted && appState.configs.isEmpty) {
+            setState(() => _managing = false);
+          }
+          // Persisted state owns removal; canceled or failed deletions slide back.
+          return false;
+        },
+        child: group.isGroup
+            ? _ConfigGroupItem(
+                group: group,
+                onOptions: () => _showItemDetails(context, group: group),
+                onSocks:
+                    Socks5RuntimePlan.supportedVisitors(
+                      group.isGroup ? group.members : [group.primary],
+                    ).isEmpty
+                    ? null
+                    : () => _showSocksDetails(context, group: group),
+              )
+            : _ConfigItem(
+                config: group.primary,
+                onOptions: () => _showItemDetails(context, group: group),
+                onSocks:
+                    Socks5RuntimePlan.supportedVisitors(
+                      group.isGroup ? group.members : [group.primary],
+                    ).isEmpty
+                    ? null
+                    : () => _showSocksDetails(context, group: group),
+              ),
+      ),
     );
   }
 
@@ -169,41 +295,87 @@ class ConfigsScreen extends StatelessWidget {
     );
   }
 
-  /// 三点菜单：统一毛玻璃弹窗（Edit / Delete）
-  void _showItemMenu(
-    BuildContext context, {
-    required VoidCallback onEdit,
-    required VoidCallback onDelete,
-  }) {
+  void _showItemDetails(BuildContext context, {required ConfigGroup group}) {
+    var current = group;
+    var anchorId = group.primary.id;
     showFrostedDialog<void>(
       context: context,
-      builder: (dialogContext) => FrostedCard(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Actions', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 4),
-            const Divider(),
-            _MenuAction(
-              icon: Icons.edit_outlined,
-              label: 'Edit',
-              onTap: () {
-                Navigator.pop(dialogContext);
-                onEdit();
+      builder: (_) => StatefulBuilder(
+        builder: (dialogContext, updateDialog) => ListenableBuilder(
+          listenable: appState,
+          builder: (_, _) {
+            current =
+                appState
+                    .buildGroups()
+                    .where(
+                      (candidate) =>
+                          candidate.primary.id == anchorId ||
+                          candidate.members.any(
+                            (member) => member.id == anchorId,
+                          ) ||
+                          (current.isGroup &&
+                              candidate.groupId == current.groupId),
+                    )
+                    .firstOrNull ??
+                current;
+            return ConfigDetailsDialog(
+              title: current.groupName,
+              configs: current.isGroup ? current.members : [current.primary],
+              onEdit: () async {
+                final savedId = await _openEdit(
+                  dialogContext,
+                  configId: current.primary.id,
+                );
+                if (!dialogContext.mounted) return;
+                updateDialog(() {
+                  if (savedId != null) anchorId = savedId;
+                });
               },
-            ),
-            _MenuAction(
-              icon: Icons.delete_outline,
-              label: 'Delete',
-              destructive: true,
-              onTap: () {
-                Navigator.pop(dialogContext);
-                onDelete();
-              },
-            ),
-          ],
+            );
+          },
         ),
+      ),
+    );
+  }
+
+  void _showSocksDetails(BuildContext context, {required ConfigGroup group}) {
+    var current = group;
+    showFrostedDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ListenableBuilder(
+        listenable: appState,
+        builder: (_, _) {
+          current =
+              appState
+                  .buildGroups()
+                  .where(
+                    (candidate) =>
+                        candidate.primary.id == current.primary.id ||
+                        (current.isGroup &&
+                            candidate.groupId == current.groupId),
+                  )
+                  .firstOrNull ??
+              current;
+          final visitors = Socks5RuntimePlan.supportedVisitors(
+            current.isGroup ? current.members : [current.primary],
+          );
+          final initial = visitors
+              .map((config) => config.socks5)
+              .nonNulls
+              .firstOrNull;
+          return Socks5ConfigDialog(
+            initial: initial,
+            supportsTcp: visitors.any(
+              (config) => ['stcp', 'xtcp'].contains(config.protocol),
+            ),
+            supportsUdp: visitors.any(
+              (config) => ['sudp', 'xudp'].contains(config.protocol),
+            ),
+            onSave: (value) =>
+                appState.setSocks5ForConfig(current.primary.id, value),
+          );
+        },
       ),
     );
   }
@@ -319,87 +491,73 @@ class ConfigsScreen extends StatelessWidget {
   }
 }
 
-void _confirmDelete(BuildContext context, FrpConfig config) {
-  showFrostedDialog<void>(
-    context: context,
-    builder: (dialogContext) => FrostedCard(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Delete Configuration',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            "Are you sure you want to delete '${ConfigDomainService.displayName(config)}'?",
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  Navigator.pop(dialogContext);
-                  await _runConfigMutation(
-                    context,
-                    () => appState.deleteConfig(config.id),
-                    'Unable to delete configuration',
-                  );
-                },
-                child: const Text('Delete'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
-  );
-}
+Future<void> _confirmDelete(
+  BuildContext context,
+  FrpConfig config,
+) => _confirmConfigRemoval(
+  context,
+  title: 'Delete Configuration',
+  message:
+      "Are you sure you want to delete '${ConfigDomainService.displayName(config)}'?",
+  remove: () => appState.deleteConfig(config.id),
+  failureMessage: 'Unable to delete configuration',
+);
 
-void _confirmDeleteGroup(BuildContext context, ConfigGroup group) {
-  showFrostedDialog<void>(
+Future<void> _confirmDeleteGroup(
+  BuildContext context,
+  ConfigGroup group,
+) => _confirmConfigRemoval(
+  context,
+  title: 'Delete Group',
+  message:
+      "Are you sure you want to delete '${group.groupName}' and all its configs?",
+  remove: () => appState.deleteGroup(group.groupId),
+  failureMessage: 'Unable to delete configuration group',
+);
+
+Future<void> _confirmConfigRemoval(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required Future<void> Function() remove,
+  required String failureMessage,
+}) async {
+  final confirmed = await showFrostedDialog<bool>(
     context: context,
-    builder: (dialogContext) => FrostedCard(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Delete Group', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          Text(
-            "Are you sure you want to delete '${group.groupName}' and all its configs?",
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  Navigator.pop(dialogContext);
-                  await _runConfigMutation(
-                    context,
-                    () => appState.deleteGroup(group.groupId),
-                    'Unable to delete configuration group',
-                  );
-                },
-                child: const Text('Delete'),
-              ),
-            ],
-          ),
-        ],
+    barrierDismissible: false,
+    builder: (dialogContext) => Padding(
+      padding: const EdgeInsets.all(16),
+      child: FrostedCard(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Text(message),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  key: const ValueKey('config_delete_cancel'),
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  key: const ValueKey('config_delete_confirm'),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     ),
   );
+  if (confirmed != true || !context.mounted) return;
+  await _runConfigMutation(context, remove, failureMessage);
 }
 
 class _EmptyConfigs extends StatelessWidget {
@@ -508,17 +666,61 @@ class _ServerListItem extends StatelessWidget {
   }
 }
 
+enum _ConfigMenuAction { config, socks }
+
+class _ConfigMenu extends StatelessWidget {
+  final VoidCallback onConfig;
+  final VoidCallback? onSocks;
+  const _ConfigMenu({required this.onConfig, this.onSocks});
+
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<_ConfigMenuAction>(
+    tooltip: 'Options',
+    position: PopupMenuPosition.under,
+    icon: const Icon(Icons.more_vert, size: 20),
+    onSelected: (action) {
+      switch (action) {
+        case _ConfigMenuAction.config:
+          onConfig();
+        case _ConfigMenuAction.socks:
+          onSocks?.call();
+      }
+    },
+    itemBuilder: (_) => [
+      const PopupMenuItem(
+        value: _ConfigMenuAction.config,
+        child: Row(
+          children: [
+            Icon(Icons.description_outlined, size: 18),
+            SizedBox(width: 12),
+            Text('Config'),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: _ConfigMenuAction.socks,
+        enabled: onSocks != null,
+        child: const Row(
+          children: [
+            Icon(Icons.lan_outlined, size: 18),
+            SizedBox(width: 12),
+            Text('SOCKS'),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
 class _ConfigGroupItem extends StatelessWidget {
   final ConfigGroup group;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
   final VoidCallback onOptions;
+  final VoidCallback? onSocks;
 
   const _ConfigGroupItem({
     required this.group,
-    required this.onEdit,
-    required this.onDelete,
     required this.onOptions,
+    this.onSocks,
   });
 
   @override
@@ -573,20 +775,19 @@ class _ConfigGroupItem extends StatelessWidget {
             ),
           ),
           Switch(
+            key: ValueKey('config_group_enable_${group.groupId}'),
             value: group.enabled,
             onChanged: (v) async {
-              await _runConfigMutation(
+              await _confirmConfigEnabled(
                 context,
-                () => appState.setGroupEnabled(group.groupId, v),
-                'Unable to update configuration group',
+                name: group.groupName,
+                enabled: v,
+                apply: () => appState.setGroupEnabled(group.groupId, v),
+                failureMessage: 'Unable to update configuration group',
               );
             },
           ),
-          IconButton(
-            tooltip: 'Options',
-            onPressed: onOptions,
-            icon: const Icon(Icons.more_vert, size: 20),
-          ),
+          _ConfigMenu(onConfig: onOptions, onSocks: onSocks),
         ],
       ),
     );
@@ -595,15 +796,13 @@ class _ConfigGroupItem extends StatelessWidget {
 
 class _ConfigItem extends StatelessWidget {
   final FrpConfig config;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
   final VoidCallback onOptions;
+  final VoidCallback? onSocks;
 
   const _ConfigItem({
     required this.config,
-    required this.onEdit,
-    required this.onDelete,
     required this.onOptions,
+    this.onSocks,
   });
 
   @override
@@ -653,20 +852,19 @@ class _ConfigItem extends StatelessWidget {
             ),
           ),
           Switch(
+            key: ValueKey('config_enable_${config.id}'),
             value: config.enabled,
             onChanged: (v) async {
-              await _runConfigMutation(
+              await _confirmConfigEnabled(
                 context,
-                () => appState.setConfigEnabled(config.id, v),
-                'Unable to update configuration',
+                name: ConfigDomainService.displayName(config),
+                enabled: v,
+                apply: () => appState.setConfigEnabled(config.id, v),
+                failureMessage: 'Unable to update configuration',
               );
             },
           ),
-          IconButton(
-            tooltip: 'Options',
-            onPressed: onOptions,
-            icon: const Icon(Icons.more_vert, size: 20),
-          ),
+          _ConfigMenu(onConfig: onOptions, onSocks: onSocks),
         ],
       ),
     );
@@ -711,6 +909,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
   String? _certificateLoadError;
   bool _certificatesLoading = true;
   late String _protocol;
+  late String _wireProtocol;
   late bool _tcpMux;
   late bool _tlsEnabled;
   late bool _securityExpanded;
@@ -722,8 +921,8 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
 
   static const _protocols = ServerConfig.supportedProtocols;
   static const _intervals = ServerConfig.intervalPresets;
-  static const _controlHeight = 44.0;
-  static const _controlFontSize = 14.0;
+  static const _controlHeight = AppFormStyle.controlHeight;
+  static const _controlFontSize = AppFormStyle.fontSize;
 
   @override
   void initState() {
@@ -740,6 +939,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
     _tlsKeyFile = TextEditingController(text: s.tlsKeyFile);
     _tlsTrustedCaFile = TextEditingController(text: s.tlsTrustedCaFile);
     _protocol = ServerConfig.normalizeProtocol(s.protocol);
+    _wireProtocol = s.wireProtocol;
     _tcpMux = s.tcpMux;
     _tlsEnabled = s.tlsEnabled;
     _securityExpanded = s.tlsEnabled;
@@ -897,6 +1097,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
       token: _token.text,
       serverId: id,
       protocol: _protocol,
+      wireProtocol: _wireProtocol,
       tcpMux: _tcpMux,
       heartbeatInterval: _heartbeatInterval,
       heartbeatTimeout: _heartbeatTimeout,
@@ -1090,7 +1291,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: DropdownButtonFormField<String>(
+                          child: AppDropdownButtonFormField<String>(
                             key: const ValueKey('server_protocol'),
                             initialValue: _protocol,
                             isExpanded: true,
@@ -1109,6 +1310,26 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
                           ),
                         ),
                         const SizedBox(width: 8),
+                        Expanded(
+                          child: AppDropdownButtonFormField<String>(
+                            key: const ValueKey('server_wire_protocol'),
+                            initialValue: _wireProtocol,
+                            isExpanded: true,
+                            style: _controlTextStyle(),
+                            decoration: _compactDecoration('Wire'),
+                            items: ServerConfig.supportedWireProtocols
+                                .map(
+                                  (version) => DropdownMenuItem(
+                                    value: version,
+                                    child: Text(version),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) =>
+                                setState(() => _wireProtocol = v ?? 'v2'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         Expanded(child: _tcpMuxControl()),
                       ],
                     ),
@@ -1124,7 +1345,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
                             onChanged: (v) => _heartbeatInterval = v,
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: _intervalField(
                             key: const ValueKey('server_heartbeat_timeout'),
@@ -1133,7 +1354,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
                             onChanged: (v) => _heartbeatTimeout = v,
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: _intervalField(
                             key: const ValueKey('server_keepalive'),
@@ -1199,17 +1420,12 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
     String? hint,
     Widget? suffixIcon,
   }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
+    return AppFormStyle.decoration(
+      label: label,
+      hint: hint,
       suffixIcon: suffixIcon,
-      isDense: true,
+    ).copyWith(
       constraints: const BoxConstraints.tightFor(height: _controlHeight),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
-      labelStyle: const TextStyle(fontSize: _controlFontSize),
-      floatingLabelStyle: const TextStyle(fontSize: _controlFontSize),
-      hintStyle: const TextStyle(fontSize: _controlFontSize),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
     );
   }
 
@@ -1219,35 +1435,24 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
   }
 
   Widget _tcpMuxControl() {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      key: const ValueKey('server_tcp_mux_control'),
-      constraints: const BoxConstraints.tightFor(height: _controlHeight),
-      padding: const EdgeInsets.only(left: 11, right: 2),
-      decoration: BoxDecoration(
-        border: Border.all(color: scheme.outline),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              'tcpMux',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: _controlTextStyle(),
-            ),
-          ),
-          Transform.scale(
-            scale: 0.82,
-            child: Switch(
-              key: const ValueKey('server_tcp_mux'),
-              value: _tcpMux,
-              onChanged: (v) => setState(() => _tcpMux = v),
-            ),
-          ),
-        ],
-      ),
+    return AppDropdownButtonFormField<bool>(
+      key: const ValueKey('server_tcp_mux'),
+      initialValue: _tcpMux,
+      style: _controlTextStyle(),
+      decoration: _compactDecoration('tcpMux'),
+      items: const [
+        DropdownMenuItem(
+          value: true,
+          child: Text('Enabled', maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        DropdownMenuItem(
+          value: false,
+          child: Text('Disabled', maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+      ],
+      onChanged: (value) {
+        if (value != null) setState(() => _tcpMux = value);
+      },
     );
   }
 
@@ -1373,7 +1578,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        DropdownButtonFormField<String>(
+        AppDropdownButtonFormField<String>(
           key: const ValueKey('server_tls_identity'),
           initialValue: _certificateIdentitySelection,
           isExpanded: true,
@@ -1437,7 +1642,7 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
     required ValueChanged<int> onChanged,
   }) {
     final options = <int>{..._intervals, value}.toList()..sort();
-    return DropdownButtonFormField<int>(
+    return AppDropdownButtonFormField<int>(
       key: key,
       initialValue: value,
       isExpanded: true,
@@ -1460,42 +1665,4 @@ class _ServerEditDialogState extends State<ServerEditDialog> {
 
   String _protocolLabel(String protocol) =>
       protocol == 'websocket' ? 'WS' : protocol.toUpperCase();
-}
-
-class _MenuAction extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool destructive;
-
-  const _MenuAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.destructive = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final color = destructive ? scheme.error : scheme.onSurface;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: color),
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodyMedium
-                  ?.copyWith(color: color),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

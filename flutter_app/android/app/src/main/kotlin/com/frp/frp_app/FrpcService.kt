@@ -61,15 +61,17 @@ class FrpcService : Service() {
         private const val EXTRA_START_ID = "start_id"
         private const val RUNTIME_CONFIG_NAME = "frpc-runtime.toml"
         private const val MAX_CONFIG_BYTES = 512 * 1024
-        private const val MAX_LOG_LINE_CHARS = 4096
+        // Intent strings are parcelled as UTF-16. Leave headroom below Binder's
+        // transaction limit even for an ASCII envelope (two parcel bytes per byte).
+        internal const val MAX_SOCKS_RUNTIME_PAYLOAD_BYTES = 384 * 1024
+        private const val MAX_LOG_LINE_CHARS = RuntimeLogSanitizer.MAX_LOG_LINE_CHARS
         private const val MAX_APP_STATUS_ENTRIES = 1024
-        private const val TRUNCATED_LOG_SUFFIX = " … [truncated]"
+        private const val TRUNCATED_LOG_SUFFIX = RuntimeLogSanitizer.TRUNCATED_LOG_SUFFIX
         private const val DEFAULT_STUN_PORT = 3478
         private val runIntentLock = Any()
         private val stunEndpointPattern = Regex(
             """(?m)^(\s*natHoleStunServer\s*=\s*)\"([^\"\r\n]+)\"(\s*(?:#.*)?)$""",
         )
-        private val ansiEscapePattern = Regex("\u001B\\[[;\\d]*m")
 
         private data class RunIntentState(
             val desired: Boolean,
@@ -180,32 +182,9 @@ class FrpcService : Service() {
             return config.replaceRange(match.range, replacement)
         }
 
-        internal fun redactLogLine(line: String): String {
-            val key = """authorization|token|secret(?:[\s_-]*key)?|client[\s_-]*secret|password|passwd|credential|api[\s_-]*key|private[\s_-]*key|access[\s_-]*key|cookie|sk"""
-            val field = Regex(
-                """(?i)(?<![\w-])(?:(['\"]?)($key)\1)(?![\w-])\s*([=:])\s*(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|(?:bearer\s+)?[^\r\n,;}\]]+?(?=\s+(?:['\"]?(?:$key)['\"]?)(?![\w-])\s*[=:]|[,;}\]]|$))""",
-            )
-            return line.replace(field) { match ->
-                val quote = match.groupValues[1]
-                val name = match.groupValues[2]
-                val separator = match.groupValues[3]
-                if (quote.isNotEmpty()) {
-                    "$quote$name$quote$separator$quote***$quote"
-                } else {
-                    "$name=***"
-                }
-            }
-        }
+        internal fun redactLogLine(line: String): String = RuntimeLogSanitizer.redact(line)
 
-        internal fun sanitizeLogLine(raw: String): String {
-            val bounded = if (raw.length <= MAX_LOG_LINE_CHARS) {
-                raw
-            } else {
-                raw.take(MAX_LOG_LINE_CHARS - TRUNCATED_LOG_SUFFIX.length) +
-                    TRUNCATED_LOG_SUFFIX
-            }
-            return redactLogLine(bounded.replace(ansiEscapePattern, ""))
-        }
+        internal fun sanitizeLogLine(raw: String): String = RuntimeLogSanitizer.sanitize(raw)
 
         internal fun readBoundedLogLines(reader: Reader, onLine: (String) -> Unit) {
             val buffer = CharArray(1024)
@@ -272,6 +251,31 @@ class FrpcService : Service() {
         @Volatile
         var channel: MethodChannel? = null
 
+        // Include diagnostics produced before the foreground service starts,
+        // and retain them across service restarts within this app process.
+        private val recentLogs = ArrayDeque<String>(2000)
+        private val logsLock = Any()
+        private val logHandler by lazy { Handler(Looper.getMainLooper()) }
+
+        internal fun readRecentLogs(): String = synchronized(logsLock) {
+            recentLogs.joinToString("\n")
+        }
+
+        internal fun recordLog(raw: String): String {
+            val line = sanitizeLogLine(raw)
+            synchronized(logsLock) {
+                recentLogs.addLast(line)
+                if (recentLogs.size > 2000) recentLogs.removeFirst()
+                // Queue in the same order as the snapshot, even when frpc,
+                // STUN and SOCKS workers report concurrently.
+                val ch = channel
+                if (ch != null) logHandler.post {
+                    if (channel === ch) runCatching { ch.invokeMethod("onLog", line) }
+                }
+            }
+            return line
+        }
+
         @Volatile
         internal var beforeStartWorkerForTest: (() -> Unit)? = null
 
@@ -279,8 +283,19 @@ class FrpcService : Service() {
         internal var beforeStopWorkerForTest: (() -> Unit)? = null
 
         /** 提交用户启动请求，实际进程启动在 onStartCommand 中串行执行。 */
-        fun start(context: Context, configContent: String?): Boolean =
-            startWithCommit(context, configContent) { editor -> editor.commit() }
+        fun start(
+            context: Context,
+            configContent: String?,
+            socks5Forwards: List<*> = emptyList<Any>(),
+        ): Boolean {
+            if (configContent.isNullOrBlank() || !utf8Fits(configContent, MAX_CONFIG_BYTES)) return false
+            val payload = try {
+                FrpcRuntimePayload(configContent, Socks5ForwardRule.fromMaps(socks5Forwards)).encode()
+            } catch (_: Exception) {
+                return false
+            }
+            return startWithCommit(context, payload) { editor -> editor.commit() }
+        }
 
         internal fun startWithCommitForTest(
             context: Context,
@@ -294,7 +309,7 @@ class FrpcService : Service() {
             commitAttempt: (SharedPreferences.Editor) -> Boolean,
         ): Boolean {
             if (configContent.isNullOrBlank() ||
-                !utf8Fits(configContent, MAX_CONFIG_BYTES)
+                !runtimePayloadFits(configContent)
             ) return false
             val startId = UUID.randomUUID().toString()
             val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -394,6 +409,12 @@ class FrpcService : Service() {
         private fun deleteRuntimeConfig(context: Context) {
             runtimeConfigFile(context).delete()
             File(context.noBackupFilesDir, "$RUNTIME_CONFIG_NAME.pending").delete()
+        }
+
+        internal fun runtimePayloadFits(value: String): Boolean {
+            val limit = if (value.trimStart().startsWith("{")) MAX_SOCKS_RUNTIME_PAYLOAD_BYTES
+                else MAX_CONFIG_BYTES
+            return utf8Fits(value, limit)
         }
 
         private fun utf8Fits(value: String, maxBytes: Int): Boolean {
@@ -592,8 +613,8 @@ class FrpcService : Service() {
     private var frpcPid: Int = -1
     @Volatile
     private var terminatingProcess: Process? = null
-    private val logs = ArrayDeque<String>(2000)
-    private val logsLock = Any()
+    @Volatile
+    private var socks5Forwarder: Socks5Forwarder? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val processExecutor: ExecutorService = Executors.newSingleThreadExecutor { task ->
         Thread(task, "frp-process-control").apply { isDaemon = true }
@@ -803,7 +824,7 @@ class FrpcService : Service() {
     }
 
     private fun startFrpcInternal(
-        configContent: String?,
+        runtimeContent: String?,
         encryptedPayload: String? = null,
         requestId: String? = null,
     ): Boolean {
@@ -811,7 +832,12 @@ class FrpcService : Service() {
         stopFrpcInternal(deleteConfig = true)
         if (destroying.get() || !isCurrentRunIntent(this, requestId)) return false
         val frpc = frpcBinary()
-        if (!frpc.exists() || configContent.isNullOrBlank() ||
+        val payload = try {
+            if (runtimeContent.isNullOrBlank() || !runtimePayloadFits(runtimeContent)) null
+            else FrpcRuntimePayload.decode(runtimeContent)
+        } catch (_: Exception) { null }
+        val configContent = payload?.configContent
+        if (payload == null || !frpc.exists() || configContent.isNullOrBlank() ||
             !utf8Fits(configContent, MAX_CONFIG_BYTES)
         ) {
             sendStatus("server", "error", "frpc binary or config missing")
@@ -827,6 +853,16 @@ class FrpcService : Service() {
             // STUN 域名解析为 IP（Android 上 Go DNS 走 [::1]:53 会被拒）
             val patchedCfg = patchStunEndpoints(configContent)
             if (destroying.get() || !isCurrentRunIntent(this, requestId)) return false
+            if (payload.forwards.isNotEmpty()) {
+                val forwarder = Socks5Forwarder(payload.forwards, report = { message ->
+                    // Final traffic snapshots can arrive after the forwarder
+                    // field is cleared. These diagnostics have stable owners
+                    // and must not feed the frpc status parser (names are user text).
+                    recordLog("[SOCKS5] $message")
+                })
+                socks5Forwarder = forwarder
+                forwarder.start()
+            }
             val cfgFile = writeRuntimeConfig(patchedCfg)
             val pb = ProcessBuilder(frpc.absolutePath, "-c", cfgFile.absolutePath)
             pb.environment()["GODEBUG"] = "netdns=go"
@@ -842,8 +878,7 @@ class FrpcService : Service() {
             }
             lastStartMs = System.currentTimeMillis()
             Log.d("FrpEngine", "frpc started, pid=$frpcPid")
-            synchronized(logsLock) { logs.clear() }
-            val recoveryPayload = encryptedPayload ?: SecureStringCodec.encrypt(configContent)
+            val recoveryPayload = encryptedPayload ?: SecureStringCodec.encrypt(payload.encode())
             if (!commitRunningPayload(this, requestId, recoveryPayload)) {
                 stopFrpcInternal(deleteConfig = true)
                 abandonRunIntentIfCurrent(this, requestId)
@@ -875,6 +910,8 @@ class FrpcService : Service() {
                     val code = process.waitFor()
                     submitProcessTask {
                         if (frpcProcess === process) {
+                            socks5Forwarder?.close()
+                            socks5Forwarder = null
                             frpcProcess = null
                             frpcPid = -1
                             deleteRuntimeConfig(this)
@@ -901,9 +938,12 @@ class FrpcService : Service() {
             }, 10_000)
             true
         } catch (e: Exception) {
-            Log.e("FrpEngine", "start failed", e)
-            sendStatus("server", "error", "Failed to start frpc")
+            Log.e("FrpEngine", "start failed (${e.javaClass.simpleName})")
+            val detail = if (e is Socks5ListenException) e.message ?: "Unable to bind SOCKS5 forwarding ports"
+                else "Failed to start frpc"
             stopFrpcInternal(deleteConfig = true)
+            onFrpcLine("[Android] $detail")
+            sendStatus("server", "error", detail)
             abandonRunIntentIfCurrent(this, requestId)
             false
         }
@@ -945,7 +985,7 @@ class FrpcService : Service() {
         }
     }
 
-    fun readLogs(): String = synchronized(logsLock) { logs.joinToString("\n") }
+    fun readLogs(): String = readRecentLogs()
 
     /** 应用内存占用：Flutter 进程 RSS + frpc 子进程 RSS（MB） */
     fun getMemoryMb(): Double {
@@ -1001,6 +1041,8 @@ class FrpcService : Service() {
     /** Terminal lifecycle fallback after the bounded executor shutdown window. */
     private fun startTerminalCleanup() {
         Thread {
+            socks5Forwarder?.close()
+            socks5Forwarder = null
             val processes = listOfNotNull(frpcProcess, terminatingProcess).distinct()
             frpcProcess = null
             frpcPid = -1
@@ -1032,6 +1074,8 @@ class FrpcService : Service() {
     }
 
     private fun stopFrpcInternal(deleteConfig: Boolean) {
+        socks5Forwarder?.close()
+        socks5Forwarder = null
         val process = frpcProcess
         val processPid = frpcPid
         // 先清空引用，防止 monitorThread 把主动停止误判为异常退出。
@@ -1120,12 +1164,7 @@ class FrpcService : Service() {
     }
 
     private fun onFrpcLine(raw: String) {
-        val line = sanitizeLogLine(raw)
-        synchronized(logsLock) {
-            logs.addLast(line)
-            if (logs.size > 2000) logs.removeFirst()
-        }
-        sendLog(line)
+        val line = recordLog(raw)
         parseLine(line)
     }
 
@@ -1226,16 +1265,6 @@ class FrpcService : Service() {
                 statusSnapshot.forEach { (name, type) ->
                     ch.invokeMethod("onAppStatus", mapOf("name" to name, "type" to type))
                 }
-            } catch (e: Exception) {
-            }
-        }
-    }
-
-    private fun sendLog(line: String) {
-        val ch = channel ?: return
-        mainHandler.post {
-            try {
-                ch.invokeMethod("onLog", line)
             } catch (e: Exception) {
             }
         }

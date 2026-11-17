@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../models/frp_config.dart';
 import '../state/app_state.dart';
+import '../widgets/app_dropdown_field.dart';
+import '../widgets/editor_card.dart';
 
 typedef ManualConfigSaver = Future<void> Function(
   FrpConfig config,
@@ -12,8 +14,14 @@ typedef ManualConfigSaver = Future<void> Function(
 class ManualConfigEditScreen extends StatefulWidget {
   final int? configId;
   final ManualConfigSaver? onSave;
+  final bool asDialog;
 
-  const ManualConfigEditScreen({super.key, this.configId, this.onSave});
+  const ManualConfigEditScreen({
+    super.key,
+    this.configId,
+    this.onSave,
+    this.asDialog = false,
+  });
 
   @override
   State<ManualConfigEditScreen> createState() => _ManualConfigEditScreenState();
@@ -27,6 +35,16 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
   String _toml = '';
   FrpConfig? _original;
   bool _saving = false;
+  bool _allowPop = false;
+  bool _confirmingClose = false;
+  late final String _initialServerId;
+  late final String _initialGroupName;
+  late final String _initialToml;
+
+  bool get _hasChanges =>
+      _serverId != _initialServerId ||
+      _groupName != _initialGroupName ||
+      _toml != _initialToml;
 
   final _groupNameCtrl = TextEditingController();
   final _tomlCtrl = TextEditingController();
@@ -69,6 +87,9 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     }
     _groupNameCtrl.text = _groupName;
     _tomlCtrl.text = _toml;
+    _initialServerId = _serverId;
+    _initialGroupName = _groupName;
+    _initialToml = _toml;
   }
 
   @override
@@ -208,116 +229,152 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
         ),
       ),
     );
-    Navigator.pop(context);
+    _close();
+  }
+
+  void _close() {
+    setState(() => _allowPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context);
+    });
+  }
+
+  Future<void> _requestClose() async {
+    if (_saving || _confirmingClose) return;
+    if (!_hasChanges) {
+      _close();
+      return;
+    }
+    _confirmingClose = true;
+    final action = await confirmUnsavedEditorChanges(context);
+    _confirmingClose = false;
+    if (!mounted) return;
+    switch (action) {
+      case UnsavedEditorAction.save:
+        await _save();
+        return;
+      case UnsavedEditorAction.discard:
+        _close();
+        return;
+      case null:
+        return;
+    }
   }
 
   InputDecoration _dec(String label, {String? hint}) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      border: const OutlineInputBorder(),
-    );
+    return AppFormStyle.decoration(label: label, hint: hint);
   }
 
   @override
   Widget build(BuildContext context) {
+    final title = _isEditing ? 'Edit Manual Config' : 'Manual Config';
     return PopScope(
-      canPop: !_saving,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(_isEditing ? 'Edit Manual Config' : 'Manual Config'),
-          actions: [
-            TextButton(
-              onPressed: _saving ? null : _save,
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Basic Information',
-                    style: Theme.of(context).textTheme.titleMedium,
+      canPop: !_saving && (_allowPop || !_hasChanges),
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _requestClose();
+      },
+      child: widget.asDialog
+          ? EditorCard(
+              title: title,
+              saving: _saving,
+              onClose: _requestClose,
+              onSave: _save,
+              child: SingleChildScrollView(child: _formContent(context)),
+            )
+          : Scaffold(
+              appBar: AppBar(
+                leading: BackButton(onPressed: _requestClose),
+                title: Text(title),
+                actions: [
+                  TextButton(
+                    onPressed: _saving ? null : _save,
+                    child: const Text('Save'),
                   ),
-                  const SizedBox(height: 8),
-                  // Server ID \u9009\u62e9
-                  DropdownButtonFormField<String>(
-                    initialValue: _serverId,
-                    decoration: _dec('Belongs to Server'),
-                    items: appState.servers
-                        .map(
-                          (sv) => DropdownMenuItem(
-                            value: sv.serverId,
-                            child: Text(
-                              '${sv.name.isEmpty ? "FRPS Server" : sv.name} (${sv.serverId})',
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() => _serverId = v ?? ''),
-                  ),
-                  const SizedBox(height: 12),
-                  // \u5206\u7ec4\u547d\u540d
-                  TextField(
-                    controller: _groupNameCtrl,
-                    onChanged: (v) => setState(() => _groupName = v),
-                    decoration: _dec(
-                      'Group Name',
-                      hint: 'Optional group for this config',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // \u624b\u52a8\u7f16\u5199\u533a\u57df
-                  Text(
-                    'Config Content',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    flex: 9,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: TextField(
-                        controller: _tomlCtrl,
-                        onChanged: (v) => setState(() => _toml = v),
-                        maxLines: null,
-                        expands: true,
-                        textAlignVertical: TextAlignVertical.top,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
-                        decoration: const InputDecoration(
-                          hintText:
-                              '# \u5728\u6b64\u7f16\u5199 frpc \u914d\u7f6e...',
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.all(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const Spacer(flex: 1),
                 ],
               ),
+              body: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: _formContent(context),
+                  ),
+                ),
+              ),
             ),
-          ),
-        ),
-      ),
     );
   }
+
+  Widget _formContent(BuildContext context) => AbsorbPointer(
+    absorbing: _saving,
+    child: Column(
+      mainAxisSize: widget.asDialog ? MainAxisSize.min : MainAxisSize.max,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Basic Information',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        AppDropdownButtonFormField<String>(
+          initialValue: _serverId,
+          decoration: _dec('Belongs to Server'),
+          items: appState.servers
+              .map(
+                (sv) => DropdownMenuItem(
+                  value: sv.serverId,
+                  child: Text(
+                    '${sv.name.isEmpty ? "FRPS Server" : sv.name} (${sv.serverId})',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (v) => setState(() => _serverId = v ?? ''),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _groupNameCtrl,
+          onChanged: (v) => setState(() => _groupName = v),
+          decoration: _dec(
+            'Group Name',
+            hint: 'Optional group for this config',
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text('Config Content', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        if (widget.asDialog)
+          _tomlEditor(context)
+        else ...[
+          Expanded(flex: 9, child: _tomlEditor(context)),
+          const Spacer(flex: 1),
+        ],
+      ],
+    ),
+  );
+
+  Widget _tomlEditor(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: TextField(
+      controller: _tomlCtrl,
+      onChanged: (v) => setState(() => _toml = v),
+      minLines: widget.asDialog ? 10 : null,
+      maxLines: null,
+      expands: !widget.asDialog,
+      textAlignVertical: TextAlignVertical.top,
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      decoration: const InputDecoration(
+        hintText: '# 在此编写 frpc 配置...',
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        contentPadding: EdgeInsets.all(12),
+      ),
+    ),
+  );
 }

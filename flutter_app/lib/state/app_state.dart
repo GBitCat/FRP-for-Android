@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/connection_status.dart';
 import '../models/frp_config.dart';
 import '../models/server_config.dart';
+import '../models/socks5_config.dart';
 import '../services/config_import_export.dart';
 import '../services/config_domain_service.dart';
 import '../services/config_store.dart';
@@ -16,6 +17,8 @@ import '../services/certificates/certificate_binding_resolver.dart';
 import '../services/certificates/certificate_engine.dart';
 import '../services/certificates/certificate_models.dart';
 import '../services/frp_engine.dart';
+import '../services/stun_server_selector.dart';
+import '../services/socks5_runtime_plan.dart';
 import '../services/sensitive_file_cache.dart';
 import '../services/toml_generator.dart' as toml;
 
@@ -67,6 +70,9 @@ class AppState extends ChangeNotifier {
   final ConfigStore _store = ConfigStore();
   final FrpEngine engine = FrpEngine.instance;
   final CertificateBackend _certificateBackend;
+  final StunServerSelector? _stunSelector;
+  List<StunCandidate> get stunCandidates =>
+      _stunSelector?.candidates ?? const [];
 
   List<FrpConfig> configs = [];
   List<ServerConfig> servers = [];
@@ -106,8 +112,15 @@ class AppState extends ChangeNotifier {
 
   Future<void> get ready => _initialization;
 
-  AppState({CertificateBackend? certificateBackend})
-    : _certificateBackend = certificateBackend ?? CertificateEngine.instance {
+  AppState({
+    CertificateBackend? certificateBackend,
+    StunServerSelector? stunSelector,
+  }) : _stunSelector =
+           stunSelector ??
+           (Platform.isAndroid
+               ? StunServerSelector(probe: FrpEngine.instance.probeStun)
+               : null),
+       _certificateBackend = certificateBackend ?? CertificateEngine.instance {
     _subscriptions.add(
       engine.statusStream.listen((s) {
         if (_disposed) return;
@@ -173,7 +186,7 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       // Temporary-file cleanup must never block encrypted config loading.
     }
-    _resolveStun();
+    unawaited(_stunSelector?.prepare());
     hideFromRecents = await _store.loadHideFromRecents();
     if (hideFromRecents) {
       try {
@@ -482,7 +495,31 @@ class AppState extends ChangeNotifier {
         );
       }
       if (generation != _lifecycleGeneration || !_runRequested) return;
-      final ok = await engine.start(buildFullTomlFor(runtimeServer));
+      var socks5Plan = Socks5RuntimePlan.build(
+        _runtimeConfigsFor(runtimeServer),
+      );
+      var config = buildFullTomlFor(runtimeServer, socks5Plan: socks5Plan);
+      // STCP/relay-only configurations need no NAT discovery. Scan before
+      // starting P2P, and recheck user intent after the asynchronous probes.
+      if (_stunSelector != null && _requiresStun(config)) {
+        serverStatus = const ConnectionStatus(
+          ConnectionType.unknown,
+          'Checking STUN addresses...',
+        );
+        notifyListeners();
+        await _stunSelector.prepareForSelection();
+        if (_disposed || generation != _lifecycleGeneration || !_runRequested) {
+          return;
+        }
+        _stunServer = _stunSelector.takeNextEndpoint();
+        socks5Plan = Socks5RuntimePlan.build(_runtimeConfigsFor(runtimeServer));
+        config = buildFullTomlFor(runtimeServer, socks5Plan: socks5Plan);
+      }
+      socks5Plan.requirePayloadFits(config);
+      final ok = await engine.start(
+        config,
+        socks5Forwards: socks5Plan.forwards,
+      );
       if (generation != _lifecycleGeneration) {
         if (!_runRequested) await engine.stop();
         return;
@@ -503,6 +540,10 @@ class AppState extends ChangeNotifier {
       serverStatus = ConnectionStatus(
         ConnectionType.error,
         error is CertificateBindingException
+            ? error.message
+            : error is StunSelectionException
+            ? error.message
+            : error is FormatException
             ? error.message
             : 'Failed to start frpc',
       );
@@ -747,15 +788,10 @@ class AppState extends ChangeNotifier {
     );
   });
 
-  /// 解析 STUN 域名到 IP（release 下原生 InetAddress 补丁可能失效，改在 Dart 层解析）
-  Future<void> _resolveStun() async {
-    try {
-      final list = await InternetAddress.lookup('stun.easyvoip.com');
-      if (!_disposed && list.isNotEmpty) {
-        _stunServer = formatStunEndpoint(list.first);
-      }
-    } catch (_) {}
-  }
+  static bool _requiresStun(String config) => RegExp(
+    r'''^\s*(?:type|"type"|'type')\s*=\s*["']{1,3}\s*(?:xtcp|xudp)\s*["']{1,3}\s*(?:#.*)?$''',
+    multiLine: true,
+  ).hasMatch(config);
 
   @visibleForTesting
   static String formatStunEndpoint(InternetAddress address, {int port = 3478}) {
@@ -770,12 +806,14 @@ class AppState extends ChangeNotifier {
     return buildFullTomlFor(effectiveServer);
   }
 
-  String buildFullTomlFor(ServerConfig s) {
-    final apps = configs
-        .where((config) => config.enabled && _belongsToServer(config, s))
-        .toList();
+  List<FrpConfig> _runtimeConfigsFor(ServerConfig server) => configs
+      .where((config) => config.enabled && _belongsToServer(config, server))
+      .toList(growable: false);
+
+  String buildFullTomlFor(ServerConfig s, {Socks5RuntimePlan? socks5Plan}) {
+    final apps = _runtimeConfigsFor(s);
     return toml
-        .generateServerPreview(s, apps)
+        .generateServerPreview(s, apps, socks5Plan: socks5Plan)
         .replaceAll(
           'natHoleStunServer = "stun.easyvoip.com:3478"',
           'natHoleStunServer = "$_stunServer"',
@@ -1202,6 +1240,20 @@ class AppState extends ChangeNotifier {
     List<FrpConfig> nextConfigs, {
     required bool restartRuntime,
   }) async {
+    // Validate listener ownership before stopping a working configuration or
+    // committing a change which could not restart. Server instances run one
+    // at a time, so their local port namespaces are independent.
+    for (final server in servers) {
+      final apps = nextConfigs
+          .where((config) => config.enabled && _belongsToServer(config, server))
+          .toList(growable: false);
+      final plan = Socks5RuntimePlan.build(apps);
+      if (plan.forwards.isNotEmpty) {
+        plan.requirePayloadFits(
+          toml.generateServerPreview(server, apps, socks5Plan: plan),
+        );
+      }
+    }
     final runtimeTicket = await _pauseRuntimeForMutation(restartRuntime);
     try {
       await _persistAndCommit(_configuration(configs: nextConfigs));
@@ -1244,6 +1296,56 @@ class AppState extends ChangeNotifier {
       nextConfigs,
       restartRuntime:
           _isRuntimeConfig(previous) || _isRuntimeConfig(nextConfigs[i]),
+    );
+  });
+
+  Future<void> setSocks5ForConfig(
+    int configId,
+    Socks5Config? value,
+  ) => _serializeMutation(() async {
+    await _ensureInitialized();
+    final selected = configs
+        .where((config) => config.id == configId)
+        .firstOrNull;
+    if (selected == null) throw StateError('Configuration no longer exists');
+    final members = selected.groupId > 0
+        ? configs.where((config) => config.groupId == selected.groupId).toList()
+        : [selected];
+    final visitors = Socks5RuntimePlan.supportedVisitors(members).toList();
+    if (visitors.isEmpty) {
+      throw const FormatException(
+        'SOCKS5 requires a form-based visitor configuration',
+      );
+    }
+    if (value != null) {
+      final error = value.validationError();
+      if (error != null) throw FormatException(error);
+      final hasTcp = visitors.any(
+        (config) => config.protocol == 'stcp' || config.protocol == 'xtcp',
+      );
+      final hasUdp = visitors.any(
+        (config) => config.protocol == 'sudp' || config.protocol == 'xudp',
+      );
+      if ((!hasTcp && value.allTcpPorts.isNotEmpty) ||
+          (!hasUdp && value.allUdpPorts.isNotEmpty)) {
+        throw const FormatException(
+          'Add a visitor for the selected SOCKS5 protocol first',
+        );
+      }
+    }
+    final ids = visitors.map((config) => config.id).toSet();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final nextConfigs = configs
+        .map((config) {
+          if (!ids.contains(config.id)) return config;
+          final updated = config.copyWith(socks5: value, updatedAt: now);
+          _requireValidConfig(updated);
+          return updated;
+        })
+        .toList(growable: false);
+    await _persistConfigs(
+      nextConfigs,
+      restartRuntime: visitors.any(_isRuntimeConfig),
     );
   });
 
@@ -1442,6 +1544,7 @@ class AppState extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _stunSelector?.dispose();
     _runRequested = false;
     _lifecycleGeneration++;
     _pollingEnabled = false;

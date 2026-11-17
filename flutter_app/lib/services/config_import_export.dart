@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../models/frp_config.dart';
 import '../models/server_config.dart';
+import '../models/socks5_config.dart';
 import 'config_validator.dart';
 import 'limited_zip_reader.dart';
 import 'wipeable_zip_builder.dart';
@@ -386,6 +387,7 @@ class ConfigImportExport {
         server.serverAddr,
         includeSecrets ? server.token : null,
         server.protocol,
+        server.wireProtocol,
         server.tlsServerName,
         server.tlsIdentityId,
       ]) {
@@ -448,8 +450,18 @@ class ConfigImportExport {
         config.groupName,
         config.serverId,
         config.manualToml,
+        config.socks5?.targetIp,
+        config.socks5?.username,
+        includeSecrets ? config.socks5?.password : null,
       ]) {
         addJsonText(value);
+      }
+      for (final connection
+          in config.socks5?.connections ?? const <Socks5Connection>[]) {
+        addJsonText(connection.id);
+        addJsonText(connection.name);
+        addJsonText(connection.targetIp);
+        addJsonText(connection.mode.name);
       }
       for (final domain in config.customDomains) {
         addJsonText(domain);
@@ -478,6 +490,7 @@ class ConfigImportExport {
                   token: null,
                   secretKey: null,
                   stcpSecretKey: '',
+                  socks5: config.socks5?.copyWith(password: ''),
                   manualToml: config.manualToml == null
                       ? null
                       : _redactManualToml(config.manualToml!),
