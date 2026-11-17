@@ -1,3 +1,5 @@
+import 'socks5_config.dart';
+
 class PortMapping {
   final int localPort;
   final int remotePort;
@@ -48,6 +50,7 @@ class FrpConfig {
   final String? serverName;
   final int bindPort;
   final String bindAddr;
+  final Socks5Config? socks5;
 
   // 传输加密/压缩
   final bool useEncryption;
@@ -99,6 +102,7 @@ class FrpConfig {
     this.serverName,
     this.bindPort = 0,
     this.bindAddr = '127.0.0.1',
+    this.socks5,
     this.useEncryption = false,
     this.useCompression = false,
     this.useFallback = false,
@@ -229,6 +233,7 @@ class FrpConfig {
     Object? serverName = _unset,
     int? bindPort,
     String? bindAddr,
+    Object? socks5 = _unset,
     bool? useEncryption,
     bool? useCompression,
     bool? useFallback,
@@ -272,6 +277,7 @@ class FrpConfig {
           : serverName as String?,
       bindPort: bindPort ?? this.bindPort,
       bindAddr: bindAddr ?? this.bindAddr,
+      socks5: identical(socks5, _unset) ? this.socks5 : socks5 as Socks5Config?,
       useEncryption: useEncryption ?? this.useEncryption,
       useCompression: useCompression ?? this.useCompression,
       useFallback: useFallback ?? this.useFallback,
@@ -315,6 +321,7 @@ class FrpConfig {
     'serverName': serverName,
     'bindPort': bindPort,
     'bindAddr': bindAddr,
+    if (socks5 != null) 'socks5': socks5!.toJson(),
     'useEncryption': useEncryption,
     'useCompression': useCompression,
     'useFallback': useFallback,
@@ -359,6 +366,7 @@ class FrpConfig {
     serverName: _jsonNullableString(j, 'serverName'),
     bindPort: _jsonInt(j, 'bindPort', 0),
     bindAddr: _jsonString(j, 'bindAddr', '127.0.0.1'),
+    socks5: _socks5FromJson(j['socks5']),
     useEncryption: _jsonBool(j, 'useEncryption', false),
     useCompression: _jsonBool(j, 'useCompression', false),
     useFallback: _jsonBool(j, 'useFallback', false),
@@ -381,6 +389,14 @@ class FrpConfig {
     createdAt: _jsonInt(j, 'createdAt', 0),
     updatedAt: _jsonInt(j, 'updatedAt', 0),
   );
+
+  static Socks5Config? _socks5FromJson(Object? value) {
+    if (value == null) return null;
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('socks5 must be an object');
+    }
+    return Socks5Config.fromJson(value);
+  }
 
   static List<PortMapping> _portMappingsFromJson(Object? value) {
     if (value == null) return const [];

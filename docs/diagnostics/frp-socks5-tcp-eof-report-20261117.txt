@@ -1,0 +1,251 @@
+frp TCP SOCKS5 插件未传播目标端 EOF：Moonlight RTSP 超时排查与验证报告
+日期：2026-11-17
+用途：提交给 frp 内核开发，讨论正式修复。
+
+一、结论
+
+在 frp-xudp 的指定版本中，已本地复现 TCP SOCKS5 插件的连接结束信号丢失：
+目标服务返回完整响应并关闭连接后，SOCKS 客户端可以收到全部响应字节，
+却收不到 EOF；如果客户端继续等待 EOF 而不先关闭自己的发送端，连接会僵持。
+
+对提供 SOCKS5 服务的 frpc 做最小修改后，在 frps 和访问端 frpc 均不变的
+对照测试中，响应和 EOF 均正常到达。这证实了该内核缺陷及实验补丁的效果。
+
+此问题与用户报告的 Moonlight “RTSP handshake (error 110)”高度吻合，
+但尚未把补丁部署到用户实际的 Sunshine 对端，也未验证真实串流恢复。
+本报告不把本地协议复现等同于真实 Moonlight/Sunshine 全流程验证。
+
+二、版本与工作区
+
+内核仓库：https://github.com/GBitCat/frp-xudp
+内核版本标识：v0.72.0
+实测源码提交：b93b02cc04f05893580b4e9ce0d6f5dfb38a27c2
+构建工具链：go1.26.11
+SOCKS5 依赖：github.com/armon/go-socks5
+依赖版本：v0.0.0-20160902184237-e75332964ef5
+Android 项目临时分支：test/socks5-tcp-eof-20261117
+项目目录：/home/gbitcat/Projects/FRPC-Android/FRP-for-Android
+
+本次只新增实验补丁和复现脚本，保留了原有未提交改动。
+测试源码和二进制放在项目 build/socks5-eof-fix/，未覆盖应用内嵌内核。
+
+三、用户侧症状及日志证据
+
+用户报错：
+  连接错误，启动失败 RTSP handshake (error 110)
+  请检查防火墙和端口转发规则中的端口：TCP 48010、UDP 48000、UDP 48010。
+
+用户上传的筛选日志包含 42 条结构化 SOCKS5 记录。8 个端口均完成预热；
+启动初期的 channel unavailable 后续恢复，没有持续重试记录。
+
+最后的累计业务统计：
+  TCP 47984：提交给本地 frpc 23,154 B；返回本地应用 46,887 B。
+  TCP 48010：提交给本地 frpc 240 B；返回本地应用 104 B。
+  TCP 47989、47990：没有业务流量记录。
+  UDP 47998、47999、48000、48010：完成预热，但没有业务收发记录。
+
+TCP 48010 的两个统计快照为 120/52 B 和 240/104 B。
+这些是累计字节统计，不应逐行相加，也不能由此确定请求次数、命令或状态码。
+52 B 既可能与某些加密成功响应相容，也可能与加密错误响应相容；日志未记录
+报文内容，不能据此认定 OPTIONS 成功或失败。
+
+现有证据更支持先排查 TCP RTSP 交互。当前筛选日志没有可用于判断视频 UDP
+包长的数据，不能把这次失败直接归因于 UDP MTU/包长。UDP 包长问题应另行验证。
+
+四、根因：目标 EOF 没有从 SOCKS 插件传递到访问端
+
+涉及的内核源码：
+  pkg/plugin/client/socks5.go：Socks5Plugin.Handle
+  pkg/util/net/conn.go：WrapReadWriteCloserConn
+  go-socks5/request.go：handleConnect、proxy
+
+原调用关系：
+  connInfo.Conn
+    -> WrapReadWriteCloserToConn(connInfo.Conn, connInfo.UnderlyingConn)
+    -> go-socks5.Server.ServeConn
+
+go-socks5 启动两个方向的复制，并等待两个方向完成。其 proxy 函数在复制
+结束后，仅当目标 writer 实现 CloseWrite() 时，才会关闭对应发送方向：
+
+  _, err := io.Copy(dst, src)
+  if tcpConn, ok := dst.(closeWriter); ok {
+      tcpConn.CloseWrite()
+  }
+  errCh <- err
+
+WrapReadWriteCloserConn 实现 net.Conn，但没有 CloseWrite()。
+目标服务关闭后，“目标 -> SOCKS 客户端”的复制完成，却没有对逻辑隧道
+执行发送结束；另一方向仍等待客户端继续发送，handleConnect 也继续等待。
+因此函数外层 defer Close() 不会及时执行，客户端看不到目标已经结束响应。
+
+Android 应用中的 Socks5Forwarder.copyHalf 已在读到 EOF 后调用目标通道的
+shutdownOutput()。本问题是上游没有把 EOF 送到 Android 转发层，后者无信号
+可继续传递。隔离复现完全不经过 Android，也能复现同一缺陷。
+
+五、为什么影响 Moonlight
+
+核查的本地 Moonlight 源码中，transactRtspMessageTcp 每条命令建立一个 TCP
+连接，发送请求后持续读取，直到 recv() 返回 0 才解密并解析完整响应。
+该源码的 RTSP_RECEIVE_TIMEOUT_SEC 为 15 秒；等不到 EOF 时会走
+“RTSP request timed out”路径并返回 ETIMEDOUT（Android/Linux errno 110）。
+
+核查的 Sunshine 源码在处理正常 RTSP 命令并回复后，执行
+sock.shutdown(shutdown_both)。因此回复之后的连接结束是正常事务的一部分。
+
+如果 SOCKS 插件只转发回复字节而不转发结束信号，Moonlight 就可能已经拿到
+回复，仍等待 15 秒并报 RTSP handshake 超时，无法继续后续串流建立步骤。
+
+上述 Moonlight/Sunshine 结论来自本地源码检查；未核对用户实际安装程序的
+精确提交或解密用户上传的流量，因此仍需对实际环境做一次修复后复测。
+
+六、实验补丁
+
+仅在 TCP SOCKS5 插件中增加专用 net.Conn 适配器，不修改通用连接包装器：
+
+  wrapConn := netpkg.WrapReadWriteCloserToConn(connInfo.Conn, connInfo.UnderlyingConn)
+  _ = sp.Server.ServeConn(&socks5StreamConn{Conn: wrapConn})
+
+  type socks5StreamConn struct {
+      net.Conn
+  }
+
+  func (c *socks5StreamConn) CloseWrite() error {
+      return c.Conn.Close()
+  }
+
+这样 go-socks5 在完整复制目标响应并读到目标 EOF 后，会结束当前逻辑业务流，
+使访问端收到 EOF。关闭必须经过 connInfo.Conn 的包装链，以保留加密、压缩
+及其他包装的清理过程；不应绕过包装直接关闭或半关闭 UnderlyingConn。
+
+重要语义限制：
+  这是“目标 EOF 后结束整条逻辑业务流”，与普通 frp 的 libio.Join
+  任一复制方向结束后关闭连接的策略一致，并不是完整的 TCP 半关闭实现。
+  如果某协议的目标端仅关闭写端、仍期望客户端继续上传，这个最小方案会
+  结束该业务流。正式修复应明确选择该语义，或另行设计各类隧道及包装层
+  都能正确支持的半关闭机制。
+
+补丁针对提供 SOCKS5 服务的 frpc。只更新访问端 Android 内核，并不能修复
+仍运行旧插件的远端提供端。此缺陷定位到 TCP SOCKS5 路径；UDP SOCKS5 使用
+另一套实现，本次未发现它存在同一 CloseWrite 缺失问题。
+
+七、修复前后验证
+
+实际隔离链路：
+  Python 客户端 -> 原版 frpc STCP visitor -> 原版 frps
+    -> 原版或修复版 frpc 的 TCP SOCKS5 插件 -> 本机模拟目标服务
+
+只替换提供端 frpc，访问端 frpc 与 frps 二进制保持不变。
+所有监听均为 127.0.0.1，使用随机临时端口和测试凭据，结束后清理进程与配置。
+
+对照矩阵：
+  1. 线路协议 v1，业务加密和压缩均关闭。
+  2. 线路协议 v1，业务加密和压缩同时开启。
+  3. 线路协议 v2，业务加密和压缩均关闭。
+  4. 线路协议 v2，业务加密和压缩同时开启。
+  四组均显式设置 transport.tcpMux = true。
+
+每组测试三个场景：
+  - 合成 120 B 请求 / 52 B 响应，复现与用户日志一致的字节规模。
+    这组字节是合成数据，不是真实加密 RTSP 报文。
+  - 完整返回 256 KiB 响应，检查关闭前数据完整性。
+  - 明文 RTSP OPTIONS 请求 / 200 OK 响应，客户端等待 EOF。
+
+每个场景都先严格比对完整响应，再读取 EOF；超时、连接重置和额外数据均
+不能冒充 EOF 成功。另保留一条并行 SOCKS 连接，每轮执行 PING/PONG，
+检查结束一个业务流是否影响其他连接。直连与普通 STCP 是另外两组控制路径。
+
+结果：
+  原版 SOCKS5：12/12 收到完整响应，但在 2 秒观察窗口内等不到 EOF。
+  修复版 SOCKS5：12/12 收到完整响应和 EOF，等待时间按毫秒取整均为 0。
+  此处“0”只是计时精度下的结果，不能解释为绝对零延迟。
+  直连与普通 STCP 控制路径全部正常，保留的并行连接均不受影响。
+  另一个较早的 v2 单项复现等待 16,004 ms 仍无 EOF，已超过上述 15 秒超时值。
+
+Go 插件回归：
+  pkg/plugin/client、pkg/plugin/socks5udp、pkg/plugin/visitor 三个包通过；
+  使用 -race，没有竞态报告。
+  新增测试覆盖匿名/账号认证下的目标 EOF、客户端半关闭后完整 256 KiB
+  响应、错误凭据拒绝，以及不得绕过逻辑包装直接关闭 UnderlyingConn。
+  原版的两个目标 EOF 子用例分别在 3 秒后超时；补丁后通过。
+  客户端半关闭用例只证明插件单元层行为，不代表完整 frp 隧道端到端支持半关闭。
+
+验证范围限制：
+  - 集成测试是 Linux 本机 STCP，未实测 XTCP/P2P。
+  - 未测试 tcpMux=false，或仅开启加密、仅开启压缩的独立组合。
+  - 没有做真实 Sunshine/Moonlight 加密握手、视频串流或广域网复测。
+  - Android arm64 测试内核已交叉编译并检查 ELF 格式，但未安装运行；
+    应用内嵌内核未替换。Android 应用层的 RTSP 兼容补丁也未实现。
+
+八、复现命令与文件位置
+
+以下命令在当前机器使用已经生成的测试二进制，保持原版访问端和 frps 不变。
+baseline 的 --expect-socks-eof no 表示“预期复现缺陷”，所以报告 passed=true
+不是说原版没有故障；判断依据是 afterResponse=timeout_waiting_for_eof。
+
+  FRP_EOF_ROOT=/home/gbitcat/Projects/FRPC-Android/FRP-for-Android
+  FRP_EOF_BASE="$FRP_EOF_ROOT/build/frpc-update-20261115-b93b02cc"
+  FRP_EOF_FIXED="$FRP_EOF_ROOT/build/socks5-eof-fix"
+
+  python3 "$FRP_EOF_ROOT/scripts/test_socks5_tcp_eof.py" \
+    --frps "$FRP_EOF_BASE/frps-linux" \
+    --frpc "$FRP_EOF_BASE/frpc-linux" \
+    --provider-frpc "$FRP_EOF_BASE/frpc-linux" \
+    --wire-protocol v2 --encryption --compression \
+    --expect-socks-eof no --report "$FRP_EOF_FIXED/recheck-baseline-v2.json"
+
+  python3 "$FRP_EOF_ROOT/scripts/test_socks5_tcp_eof.py" \
+    --frps "$FRP_EOF_BASE/frps-linux" \
+    --frpc "$FRP_EOF_BASE/frpc-linux" \
+    --provider-frpc "$FRP_EOF_FIXED/frpc-linux" \
+    --wire-protocol v2 --encryption --compression \
+    --expect-socks-eof yes --report "$FRP_EOF_FIXED/recheck-patched-v2.json"
+
+在新的、未打补丁的 b93b02cc 源码副本根目录，可使用 patch -p1 应用下列
+补丁，再构建 Linux frpc。现有 build/socks5-eof-fix/source 已应用补丁，
+不要在该目录重复应用。
+
+  patch -p1 < /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/scripts/patches/frp-xudp-b93b02cc-socks5-tcp-eof.patch
+
+  GOTOOLCHAIN=go1.26.11 go test -mod=readonly -race -count=1 -timeout=120s \
+    ./pkg/plugin/client ./pkg/plugin/socks5udp ./pkg/plugin/visitor
+
+  GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -mod=readonly -trimpath -buildvcs=false -tags frpc,noweb \
+    -ldflags='-s -w -buildid=' -o frpc-eof-test ./cmd/frpc
+
+补丁（包含 Go 回归测试）：
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/scripts/patches/frp-xudp-b93b02cc-socks5-tcp-eof.patch
+复现脚本：
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/scripts/test_socks5_tcp_eof.py
+汇总结果：
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/build/socks5-eof-fix/results-summary.json
+完整矩阵：
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/build/socks5-eof-fix/comparison-matrix.json
+原版 / 修复版 Go 日志：
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/build/socks5-eof-fix/baseline-unit.log
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/build/socks5-eof-fix/patched-unit.log
+早期 16 秒观察结果：
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/build/rtsp-eof-check/results-v2.json
+Linux amd64 修复测试内核：
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/build/socks5-eof-fix/frpc-linux
+Android arm64 修复测试内核（仅编译，未部署）：
+  /home/gbitcat/Projects/FRPC-Android/FRP-for-Android/build/socks5-eof-fix/libfrpc-test.so
+
+SHA-256：
+  补丁：0e68f59f2c7fb77bbe52df04b461954bef2892e0cc6099a9713fe0d8b3543c0c
+  Linux 测试内核：266c53aaa8a0e83abddfc4af1e847eaeda746e4c9650b4586dac1cad26afb1b6
+  Android 测试内核：6fa9626dd40dd83b85d3d49d909849ab96caeb0339bcf32835e7523eac2186fe
+
+九、给内核开发的建议
+
+优先在提供端 TCP SOCKS5 插件修复响应结束传播，并保留上述回归测试。
+正式实现需明确 EOF/半关闭语义、检查包装层关闭顺序，并继续验证 XTCP、
+其他传输组合及真实 Moonlight/Sunshine 会话。
+
+frp-android 应用层可以考虑“指定 RTSP 端口、完整响应识别后主动向本地发送 FIN”
+的专项兼容方案：明文按 RTSP 头部和 Content-Length 判断；加密 RTSP 外层
+24 B 头部也包含长度，无需解密即可判断帧完整性。但该方案尚未实现或实测，
+不能通用地恢复任意 TCP 字节流丢失的 EOF，也不应以空闲超时替代消息边界。
+
+修复内核插件后，仍需单独验证真实串流的数据阶段；本报告没有排除其他 UDP
+包长、网络或配置问题，只证实了这个独立的 TCP SOCKS5 连接结束缺陷。

@@ -8,6 +8,7 @@ class ServerConfig {
     'websocket',
     'wss',
   ];
+  static const List<String> supportedWireProtocols = ['v1', 'v2'];
   static const List<int> intervalPresets = [10, 20, 30, 45, 60, 90, 120];
 
   final int id;
@@ -20,6 +21,7 @@ class ServerConfig {
 
   // 连接 frps 的 transport 配置
   final String protocol;
+  final String wireProtocol;
   final bool tcpMux;
   final int heartbeatInterval;
   final int heartbeatTimeout;
@@ -42,6 +44,7 @@ class ServerConfig {
     this.token = '',
     this.updatedAt = 0,
     this.protocol = 'tcp',
+    this.wireProtocol = 'v2',
     this.tcpMux = true,
     this.heartbeatInterval = 30,
     this.heartbeatTimeout = 90,
@@ -90,6 +93,9 @@ class ServerConfig {
     }
     if (!supportedProtocols.contains(protocol)) {
       return 'Unsupported server transport protocol';
+    }
+    if (!supportedWireProtocols.contains(wireProtocol)) {
+      return 'Unsupported server wire protocol';
     }
     if (!_validInterval(heartbeatInterval) ||
         !_validInterval(heartbeatTimeout) ||
@@ -156,6 +162,7 @@ class ServerConfig {
     String? token,
     int? updatedAt,
     String? protocol,
+    String? wireProtocol,
     bool? tcpMux,
     int? heartbeatInterval,
     int? heartbeatTimeout,
@@ -176,6 +183,7 @@ class ServerConfig {
       token: token ?? this.token,
       updatedAt: updatedAt ?? this.updatedAt,
       protocol: protocol ?? this.protocol,
+      wireProtocol: wireProtocol ?? this.wireProtocol,
       tcpMux: tcpMux ?? this.tcpMux,
       heartbeatInterval: heartbeatInterval ?? this.heartbeatInterval,
       heartbeatTimeout: heartbeatTimeout ?? this.heartbeatTimeout,
@@ -199,6 +207,7 @@ class ServerConfig {
     'token': token,
     'updatedAt': updatedAt,
     'protocol': protocol,
+    'wireProtocol': wireProtocol,
     'tcpMux': tcpMux,
     'heartbeatInterval': heartbeatInterval,
     'heartbeatTimeout': heartbeatTimeout,
@@ -217,6 +226,7 @@ class ServerConfig {
     token: _jsonString(j, 'token', ''),
     updatedAt: _jsonInt(j, 'updatedAt', 0),
     protocol: normalizeProtocol(_jsonString(j, 'protocol', 'tcp')),
+    wireProtocol: _jsonString(j, 'wireProtocol', 'v2'),
     tcpMux: _jsonBool(j, 'tcpMux', true),
     heartbeatInterval: _jsonInt(j, 'heartbeatInterval', 30),
     heartbeatTimeout: _jsonInt(j, 'heartbeatTimeout', 90),

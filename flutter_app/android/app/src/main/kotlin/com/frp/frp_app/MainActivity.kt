@@ -74,6 +74,7 @@ class MainActivity : FlutterActivity() {
     private var channel: MethodChannel? = null
     private var secureChannel: MethodChannel? = null
     private var documentIoBridge: DocumentIoBridge? = null
+    private var stunProbeBridge: StunProbeBridge? = null
     private val clipboardHandler = Handler(Looper.getMainLooper())
     private val secureExecutor: ExecutorService = Executors.newSingleThreadExecutor { task ->
         Thread(task, "frp-secure-bridge").apply { isDaemon = true }
@@ -91,6 +92,8 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         documentIoBridge = DocumentIoBridge(this, flutterEngine.dartExecutor.binaryMessenger)
+        stunProbeBridge?.close()
+        stunProbeBridge = StunProbeBridge(applicationContext) { FrpcService.recordLog(it) }
         channel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "com.frp.app/engine"
@@ -99,7 +102,15 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "start" -> {
                         val configContent = call.argument<String>("configContent")
-                        result.success(FrpcService.start(this, configContent))
+                        val forwards = (call.arguments as? Map<*, *>)?.get("socks5Forwards")
+                        result.success(if (forwards == null || forwards is List<*>) {
+                            FrpcService.start(this, configContent, forwards as? List<*> ?: emptyList<Any>())
+                        } else false)
+                    }
+                    "probeStun" -> {
+                        val endpoint = (call.arguments as? Map<*, *>)?.get("endpoint") as? String
+                        stunProbeBridge?.probe(endpoint, result)
+                            ?: result.success(StunProbeResult("error", detail = "STUN probe is unavailable").toMap())
                     }
                     "stop" -> {
                         result.success(FrpcService.stop(this))
@@ -152,7 +163,7 @@ class MainActivity : FlutterActivity() {
                         FrpcService.instance?.getMemoryMb() ?: getFallbackMemoryMb()
                     )
                     "getTotalMemoryMb" -> result.success(getTotalMemoryMb())
-                    "readLogs" -> result.success(FrpcService.instance?.readLogs() ?: "")
+                    "readLogs" -> result.success(FrpcService.readRecentLogs())
                     "requestIgnoreBatteryOptimizations" -> {
                         requestIgnoreBatteryOptimizations()
                         result.success(null)
@@ -220,6 +231,8 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         // 不停 frpc：进程由 FrpcService 托管，Activity 销毁不影响后台连接
         FrpcService.channel = null
+        stunProbeBridge?.close()
+        stunProbeBridge = null
         secureChannel?.setMethodCallHandler(null)
         cancelQueuedSecureTasks(secureExecutor.shutdownNow())
         val resultsToCancel = synchronized(secureResults) { secureResults.toList() }

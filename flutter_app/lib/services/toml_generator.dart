@@ -1,5 +1,6 @@
 import '../models/frp_config.dart';
 import '../models/server_config.dart';
+import 'socks5_runtime_plan.dart';
 
 String _tomlString(String value) {
   final escaped = StringBuffer();
@@ -44,12 +45,14 @@ String _tomlString(String value) {
 String quotedTomlString(String value) => '"${_tomlString(value)}"';
 
 /// 单个配置的 frpc 块（visitor/server 均按原 ConfigGenerator 输出）
-String configBlock(FrpConfig c) {
+String configBlock(FrpConfig c, {Socks5RuntimePlan? socks5Plan}) {
+  if (socks5Plan != null && !socks5Plan.emitsConfig(c)) return '';
   // 手动编写配置：原样输出
   if (c.manualToml != null && c.manualToml!.trim().isNotEmpty) {
     return '${c.manualToml!.trimRight()}\n';
   }
   final b = StringBuffer();
+  final endpoint = (socks5Plan ?? Socks5RuntimePlan.build([c])).endpointFor(c);
   if (c.isVisitor() && c.needsSecretKey()) {
     b.writeln('[[visitors]]');
     b.writeln('name = "${_tomlString(c.name)}"');
@@ -58,18 +61,35 @@ String configBlock(FrpConfig c) {
     if ((c.secretKey ?? '').isNotEmpty) {
       b.writeln('secretKey = "${_tomlString(c.secretKey!)}"');
     }
-    if (c.bindPort != -1) {
-      b.writeln('bindAddr = "${_tomlString(c.bindAddr)}"');
+    if (endpoint != null) {
+      if (!endpoint.datagram) {
+        b.writeln('bindAddr = "${_tomlString(endpoint.host)}"');
+      }
+      b.writeln('bindPort = ${endpoint.datagram ? -1 : endpoint.port}');
+    } else {
+      if (c.bindPort != -1) {
+        b.writeln('bindAddr = "${_tomlString(c.bindAddr)}"');
+      }
+      b.writeln('bindPort = ${c.bindPort}');
     }
-    b.writeln('bindPort = ${c.bindPort}');
     if (c.protocol == 'xtcp') {
       b.writeln('keepTunnelOpen = true');
     }
-    if (c.supportsFallback() && c.useFallback && c.fallbackTo.isNotEmpty) {
+    if (c.supportsFallback() &&
+        c.useFallback &&
+        c.fallbackTo.isNotEmpty &&
+        !(endpoint?.datagram ?? false)) {
       b.writeln('fallbackTo = "${_tomlString(c.fallbackTo)}"');
       b.writeln('fallbackTimeoutMs = ${c.fallbackTimeoutMs}');
     }
     _writeTransport(b, c, 'visitors');
+    if (endpoint?.datagram ?? false) {
+      b.writeln();
+      b.writeln('[visitors.plugin]');
+      b.writeln('type = "socks5_udp"');
+      b.writeln('bindAddr = "${_tomlString(endpoint!.host)}"');
+      b.writeln('bindPort = ${endpoint.port}');
+    }
   } else if (c.needsSecretKey()) {
     b.writeln('[[proxies]]');
     b.writeln('name = "${_tomlString(c.name)}"');
@@ -150,6 +170,7 @@ String globalBlock(ServerConfig server) {
   b.writeln('natHoleStunServer = "stun.easyvoip.com:3478"');
   b.writeln();
   b.writeln('transport.protocol = "${_tomlString(server.protocol)}"');
+  b.writeln('transport.wireProtocol = "${_tomlString(server.wireProtocol)}"');
   b.writeln('transport.tcpMux = ${server.tcpMux}');
   b.writeln('transport.heartbeatInterval = ${server.heartbeatInterval}');
   b.writeln('transport.heartbeatTimeout = ${server.heartbeatTimeout}');
@@ -180,31 +201,38 @@ String generateToml(
   FrpConfig? linkedConfig,
 ) {
   final b = StringBuffer();
+  final plan = Socks5RuntimePlan.build([?linkedConfig, config]);
   b.write(globalBlock(server));
-  if (linkedConfig != null) {
+  if (linkedConfig != null && plan.emitsConfig(linkedConfig)) {
     b.writeln('# Fallback ${linkedConfig.protocol.toUpperCase()} visitor');
-    b.write(configBlock(linkedConfig));
+    b.write(configBlock(linkedConfig, socks5Plan: plan));
     b.writeln();
     b.writeln('# Primary ${config.protocol.toUpperCase()} visitor');
   }
-  b.write(configBlock(config));
+  b.write(configBlock(config, socks5Plan: plan));
   return b.toString();
 }
 
 /// Server 配置预览：全局段 + 隶属于该 server 的应用配置拼接
 /// 每个应用块上方加 `# Config: 名称 (协议)` 注释；
 /// 若块本身（如手动编写的配置）已经带有 `# Config:` 注释则不再重复添加。
-String generateServerPreview(ServerConfig server, List<FrpConfig> appConfigs) {
+String generateServerPreview(
+  ServerConfig server,
+  List<FrpConfig> appConfigs, {
+  Socks5RuntimePlan? socks5Plan,
+}) {
   final b = StringBuffer();
+  final plan = socks5Plan ?? Socks5RuntimePlan.build(appConfigs);
+  final emitted = appConfigs.where(plan.emitsConfig).toList(growable: false);
   b.write(globalBlock(server));
-  for (var i = 0; i < appConfigs.length; i++) {
+  for (var i = 0; i < emitted.length; i++) {
     if (i > 0) b.writeln();
-    final block = configBlock(appConfigs[i]).trimRight();
+    final block = configBlock(emitted[i], socks5Plan: plan).trimRight();
     final hasComment = block
         .split('\n')
         .any((line) => line.trimLeft().startsWith('# Config:'));
     if (!hasComment) {
-      b.writeln('# Config: ${appConfigs[i].name} (${appConfigs[i].protocol})');
+      b.writeln('# Config: ${emitted[i].name} (${emitted[i].protocol})');
     }
     b.writeln(block);
   }

@@ -238,6 +238,12 @@ class DocumentIoBridge(
         private const val REQUEST_OPEN = 6201
         private const val REQUEST_SAVE = 6202
         private const val MAX_DOCUMENT_BYTES = 6L * 1024L * 1024L
+        // A retained log snapshot can contain 2000 lines of 4096 UTF-16
+        // characters. UTF-8 needs up to about 24 MiB for those lines. Grant
+        // the larger export bound only to our generated log filenames;
+        // configuration exports and all imports retain their existing limit.
+        private const val MAX_LOG_EXPORT_BYTES = 32L * 1024L * 1024L
+        private val LOG_EXPORT_NAME = Regex("^frpc-logs-[0-9]{8}-[0-9]{6}(?:-filtered)?\\.txt$")
         private val MIME_TYPE = Regex("^[A-Za-z0-9.+*-]{1,64}/[A-Za-z0-9.+*-]{1,64}$")
         private val MANAGED_IMPORT_DIRECTORY = Regex(
             "^file_dialog-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-" +
@@ -264,6 +270,9 @@ class DocumentIoBridge(
 
         internal fun isManagedExportSource(cacheDirectory: File, requestedSource: File): Boolean =
             managedExportIdentity(cacheDirectory, requestedSource) != null
+
+        private fun maxExportBytes(source: File): Long =
+            if (LOG_EXPORT_NAME.matches(source.name)) MAX_LOG_EXPORT_BYTES else MAX_DOCUMENT_BYTES
 
         internal data class ManagedExportIdentity(
             val device: Long,
@@ -294,7 +303,7 @@ class DocumentIoBridge(
                 }
                 val stat = Os.lstat(requestedSource.path)
                 if (!OsConstants.S_ISREG(stat.st_mode) ||
-                    stat.st_size !in 1L..MAX_DOCUMENT_BYTES
+                    stat.st_size !in 1L..maxExportBytes(requestedSource)
                 ) return null
                 ManagedExportIdentity(stat.st_dev, stat.st_ino, stat.st_size)
             } catch (_: Exception) {
@@ -316,7 +325,7 @@ class DocumentIoBridge(
                 val opened = Os.fstat(input.fd)
                 require(
                     OsConstants.S_ISREG(opened.st_mode) &&
-                        opened.st_size in 1L..MAX_DOCUMENT_BYTES &&
+                        opened.st_size in 1L..maxExportBytes(requestedSource) &&
                         opened.st_dev == pathIdentity.device &&
                         opened.st_ino == pathIdentity.inode &&
                         opened.st_size == pathIdentity.size,
