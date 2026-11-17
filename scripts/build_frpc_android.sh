@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REQUIRED_GO_VERSION="go1.26.8"
-readonly EXPECTED_FRPC_SHA256="1a5b096cac3241c490f89fa19121f59224ece4b93b30c48f6d078845b6805cb1"
+readonly REQUIRED_GO_VERSION="go1.26.11"
+# Keep frpc on its pinned patched toolchain without changing certificate builds.
+export GOTOOLCHAIN="$REQUIRED_GO_VERSION"
+readonly EXPECTED_FRPC_SHA256="6fa9626dd40dd83b85d3d49d909849ab96caeb0339bcf32835e7523eac2186fe"
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 destination="$repo_dir/flutter_app/android/app/src/main/jniLibs/arm64-v8a/libfrpc.so"
@@ -51,7 +53,7 @@ if readelf -lW "$work_dir/libfrpc.so" | grep -q 'GNU_STACK.*RWE'; then
   printf 'frpc has an executable stack\n' >&2
   exit 1
 fi
-go version -m "$work_dir/libfrpc.so" | grep -q '^.*go1\.26\.8$'
+go version -m "$work_dir/libfrpc.so" | grep -q '^.*go1\.26\.11$'
 
 if [[ "$mode" == "--check" ]]; then
   if [[ ! -f "$destination" ]] || ! cmp -s "$work_dir/libfrpc.so" "$destination"; then

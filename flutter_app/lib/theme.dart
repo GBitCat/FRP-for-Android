@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'widgets/app_form_style.dart';
+
 /// FlClash 风格主题：Material 3 + 蓝色主色 + 圆角卡片 + 柔和阴影
 /// 可选主题色（与设置页一致）
 const List<Color> appAccents = [
@@ -49,7 +51,38 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
+      canvasColor: scheme.surfaceContainerLow,
       scaffoldBackgroundColor: isDark ? darkBackground : lightBackground,
+      inputDecorationTheme: InputDecorationTheme(
+        isDense: true,
+        contentPadding: AppFormStyle.contentPadding,
+        prefixIconConstraints: AppFormStyle.iconConstraints,
+        suffixIconConstraints: AppFormStyle.iconConstraints,
+        border: const OutlineInputBorder(
+          borderRadius: AppFormStyle.borderRadius,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: AppFormStyle.borderRadius,
+          borderSide: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.7),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: AppFormStyle.borderRadius,
+          borderSide: BorderSide(color: scheme.primary, width: 1.5),
+        ),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: scheme.surfaceContainerLow,
+        surfaceTintColor: Colors.transparent,
+        elevation: 4,
+        position: PopupMenuPosition.under,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+        ),
+        textStyle: TextStyle(color: scheme.onSurface, fontSize: 16),
+      ),
       appBarTheme: AppBarTheme(
         // 顶部与空白区域一致（透明背景，不再使用主题色）
         backgroundColor: Colors.transparent,

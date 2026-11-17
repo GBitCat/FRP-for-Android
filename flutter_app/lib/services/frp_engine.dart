@@ -4,6 +4,7 @@ import 'dart:collection';
 import 'package:flutter/services.dart';
 
 import '../models/connection_status.dart';
+import 'stun_server_selector.dart';
 
 /// frpc 引擎：通过 MethodChannel 调用原生 frpc 进程，并接收状态/日志事件
 class FrpEngine {
@@ -74,11 +75,15 @@ class FrpEngine {
   };
 
   /// 启动 frpc。TOML 只在原生服务内短暂落盘，避免 Dart 层留下明文文件。
-  Future<bool> start(String configContent) async {
+  Future<bool> start(
+    String configContent, {
+    List<Map<String, dynamic>> socks5Forwards = const [],
+  }) async {
     try {
       final ok =
           await _channel.invokeMethod<bool>('start', {
             'configContent': configContent,
+            if (socks5Forwards.isNotEmpty) 'socks5Forwards': socks5Forwards,
           }) ??
           false;
       return ok;
@@ -90,6 +95,14 @@ class FrpEngine {
       _statusController.add(_serverStatus);
       return false;
     }
+  }
+
+  Future<StunProbeResult> probeStun(String endpoint) async {
+    final response = await _channel.invokeMapMethod<Object?, Object?>(
+      'probeStun',
+      {'endpoint': endpoint},
+    );
+    return StunProbeResult.fromMap(response ?? const {});
   }
 
   Future<void> stop() async {
