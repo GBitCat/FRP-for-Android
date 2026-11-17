@@ -15,6 +15,7 @@ import '../services/sensitive_file_cache.dart';
 import '../services/wipeable_zip_builder.dart';
 import '../state/app_state.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_dropdown_field.dart';
 import '../widgets/glass_sliver_appbar.dart';
 
 enum _ManagementSection { certificates, authorities }
@@ -1572,7 +1573,7 @@ class _CertificateManagementScreenState
                       ),
                     ),
                     const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
+                    AppDropdownButtonFormField<String>(
                       initialValue: algorithm,
                       decoration: const InputDecoration(labelText: 'Algorithm'),
                       items: _algorithmItems,
@@ -1712,7 +1713,7 @@ class _CertificateManagementScreenState
                       ),
                     ),
                     const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
+                    AppDropdownButtonFormField<String>(
                       initialValue: algorithm,
                       decoration: const InputDecoration(labelText: 'Algorithm'),
                       items: _algorithmItems,
@@ -1773,7 +1774,7 @@ class _CertificateManagementScreenState
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    DropdownButtonFormField<String>(
+                    AppDropdownButtonFormField<String>(
                       key: const ValueKey('certificate_signing_ca'),
                       initialValue: caId,
                       isExpanded: true,
@@ -1925,7 +1926,7 @@ class _CertificateManagementScreenState
                       ),
                     ),
                     const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
+                    AppDropdownButtonFormField<String>(
                       initialValue: role,
                       decoration: const InputDecoration(labelText: 'Role'),
                       items: const [
@@ -2089,7 +2090,7 @@ class _CertificateManagementScreenState
                       ),
                     ),
                     const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
+                    AppDropdownButtonFormField<String>(
                       initialValue: algorithm,
                       decoration: const InputDecoration(labelText: 'Algorithm'),
                       items: _algorithmItems,
@@ -2195,7 +2196,7 @@ class _CertificateManagementScreenState
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  DropdownButtonFormField<String>(
+                  AppDropdownButtonFormField<String>(
                     initialValue: serverId,
                     decoration: const InputDecoration(
                       labelText: 'Server Config',

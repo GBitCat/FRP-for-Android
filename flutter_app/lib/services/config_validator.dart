@@ -99,6 +99,19 @@ class ConfigValidator {
       }
     }
 
+    if (config.socks5 case final socks5?) {
+      final error = socks5.validationError();
+      if (error != null) return error;
+      if (!config.isVisitor() ||
+          !config.needsSecretKey() ||
+          (config.manualToml?.trim().isNotEmpty ?? false)) {
+        return 'SOCKS5 requires a form-based private visitor';
+      }
+      if (config.bindPort <= 0) {
+        return 'SOCKS5 requires a positive visitor bind port';
+      }
+    }
+
     if (config.manualToml case final manual?) {
       if (manual.length > 1024 * 1024 ||
           RegExp(r'[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]')

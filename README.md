@@ -20,9 +20,77 @@
 > `frpc` 和作为 visitor 的 `frpc`（本应用）必须全部部署兼容的
 > [`GBitCat/frp-xudp`](https://github.com/GBitCat/frp-xudp) 版本，建议保持完全相同的
 > Release。不要将官方 `fatedier/frp`、其他 fork 或不同版本与 XUDP 节点混用。
-> 当前 APK 内置版本为 `v0.71.0-v2`，其余节点应优先使用同一版本。
+> 当前 APK 内置版本为 `v0.72.0`，固定提交 `e8731afd`，包含 SOCKS5 TCP EOF、UDP 会话与 XUDP 连接稳定性修复。应用层已撤销 RTSP EOF 补丁，直接透传内核连接；对端运行 SOCKS5 插件的 frpc 也需要更新到包含 EOF 修复的版本。
+> 上游沿用了版本号，其余节点应优先使用同一提交构建。
+
+### STUN 地址探测与选择
+
+客户端通过 Dart 查询 `stun.easyvoip.com` 的 IPv4 地址，按 DNS 返回顺序去重，
+再逐一调用内置 `frpc nathole discover` 检测。子命令成功的地址权重为 1；
+超时或其他探测失败的地址权重为 0，并保留具体结果。只有权重为 1 的地址
+会在启动 P2P 配置时写入 `natHoleStunServer`；后续启动在这些地址中依序循环选择。
+
+DNS 查询期限为 5 秒，每个探测子进程总期限为 10 秒。探测结果在当前 App
+会话中缓存 5 分钟，过期后重新解析和探测；全部失败后再次点击启动会重新检测。
+没有任何地址探测成功时，P2P 配置会显示错误，不使用未经验证的地址。
+纯 STCP/SUDP 等中继配置不依赖这一检测。预览不会触发地址轮换。
+Android 后台服务恢复时继续使用已保存的运行配置；运行中不会因日志自动切换或重启。
 
 ### 配置管理
+
+Configurations 的启用、关闭操作需要确认。点击右侧菜单可分别打开 Config 和
+SOCKS 详情。Config 详情按整组展示脱敏配置，密钥和密码统一隐藏，卡片最高为
+屏幕高度的 60%，内容可滚动；底部 Edit 打开二级编辑卡片，保存后返回原详情。
+点击 Configurations 旁的 Manage 后可左滑删除并确认，系统返回可退出管理模式。
+
+SOCKS 详情中的 Edit 用于设置整组共用的目标 IP、对端 SOCKS5 用户名与密码。
+用户名和密码均为空时使用免认证；用户名非空、密码为空也可以保存。Ports 旁的
+加号打开连接编辑卡片，可填写标识用的连接名、目标 IP 和逗号分隔的 TCP/UDP
+业务端口。条目的目标 IP 留空时继承上级目标 IP；填写 IPv4 或 IPv6 后，该条目
+的全部 TCP/UDP 端口使用填写的地址。清空后恢复继承，旧条目默认继承上级。
+每个连接可独立保存、启停、删除，点击条目可编辑；旧端口自动归入 Default 条目。
+连接编辑中可选择 Immediate（即时模式）或 On demand（触发模式），默认与旧
+配置均为 On demand。
+触发模式在本地 TCP 连接或首个 UDP 包到达后协商 SOCKS；即时模式提前完成
+SOCKS 认证，UDP 同时预建 ASSOCIATE，访问时取用预备通道。TCP 的目标 CONNECT
+仍由每次本地访问触发，UDP 不同来源独占各自会话。预备通道断开后会退避重试，
+并受并发和数量限制；即时模式不保证所有网络情况下首包都没有等待时间。
+客户端在该 visitor 的 bindAddress 上监听启用条目的端口，通过同协议 visitor
+请求目标 IP 的同号端口。同协议的已启用条目不能重复占用端口。
+禁用或删除全部连接会停止 SOCKS 转接，并保留共用账号和目标 IP。
+
+新建与编辑 Form/Manual Config 均使用悬浮卡片。Config 和 SOCKS 编辑卡片均
+不会被点击空白处关闭；未保存时返回可选择保存、
+放弃或继续编辑，保存失败保留草稿。单行输入框统一采用 Config 编辑页的尺寸，
+下拉菜单跟随应用浅色/深色卡片配色与圆角。
+
+TCP 使用提供端的 `socks5` 插件；UDP 使用新版 `socks5_udp` 插件，并要求提供端
+设置 `sessionMode = "datagram"`。UDP 认证和控制直接经过 SUDP/XUDP，不需要配套
+TCP visitor。提供端配置由用户部署，本轮仅提供 visitor 侧表单和转接。
+目标 IP 中的 `127.0.0.1` 指提供端所在的主机或容器。
+
+同组同协议的多个 visitor 都参与转接；共用监听时按新连接/UDP 来源会话轮换，
+每个会话固定上游，避免混合不同连接的响应。监听和连接由 Android 前台服务管理，
+关闭页面后仍可运行，并随配置停用、删除或服务停止而释放。账号密码随配置加密保存，
+普通脱敏导出会清除 SOCKS5 密码。
+
+日志页的 Auto-scroll 开关只控制自动滚动，不影响日志收集。右侧下拉可选择
+All、frpc、stun 或 Socks5，并可与文本搜索叠加。STUN 探测记录结果、权重和耗时。
+选择 Socks5 后可按 Configuration 和已命名的 Ports 条目继续筛选；一个条目中的
+TCP/UDP 端口归在一起，每行注明协议和实际端口。筛选依据固定标识，重命名不会
+切断历史日志；升级前没有归属标记的旧日志只显示在 All configurations 中。
+SOCKS 记录监听、预备通道和业务建连状态，并定期汇总累计收发统计：UDP 显示
+本地收到、提交给本地 frpc、从 frpc 收到、返回本地应用的包数和字节数，以及
+载荷大小范围和本地可观察到的丢弃；TCP 显示两个方向实际写出的字节数。
+活动端口通常每 5 秒汇总一次，多端口时限速轮转；停止时输出最终统计。
+提交给本地 frpc 不代表已送达对端，也无法直接确认内核内部静默丢包。
+日志不记录账号密码或数据包内容。
+最近 2000 行保留在 Android 进程内存中，服务重启不清空；应用进程结束后清除。
+日志页右上角的保存按钮会按当前分类、Configuration、Ports 和文本搜索条件，
+将点击时匹配的日志保存为 UTF-8 `.txt` 文件；选择 All 并清空搜索可保存全部已保留日志。
+通过系统文件选择器选择保存位置，文件保留脱敏后的原始记录和 SOCKS 结构化统计，
+不受剪贴板长度限制；打开文件选择器后新增的日志不加入本次快照。
+
 - ✅ **多 Server 连接配置**：命名、8 位 ID、transport 参数（protocol / tcpMux / heartbeat / keepalive）
 - ✅ **应用配置**：组级 `visitor.FormConfig`（公共 name、serverName、secretKey、加密/压缩）+ 手动编写 TOML
 - ✅ **P2P 多端口**：XTCP / XUDP 各自支持逗号列表与端口范围，一个端口展开为一个 visitor
@@ -124,8 +192,8 @@ cd FRP-for-Android
 挂载/构建上下文之外。仓库钩子会拦截敏感文件名，GitHub Actions 会对完整历史运行固定
 版本且校验摘要的 Gitleaks。详见 [SECURITY.md](SECURITY.md) 与 [SIGNING.md](SIGNING.md)。
 
-> `libfrpc.so` 来自 `GBitCat/frp-xudp` 的校验发布资产，已打包在
-> `android/app/src/main/jniLibs/arm64-v8a/`，无需额外下载。当前 APK 仅支持
+> `libfrpc.so` 由 `GBitCat/frp-xudp` 的固定源码和工具链可复现构建，已打包在
+> `flutter_app/android/app/src/main/jniLibs/arm64-v8a/`，无需额外下载。当前 APK 仅支持
 > `arm64-v8a`；版本、摘要和更新流程见 [FRPC_BINARY.md](FRPC_BINARY.md)。
 
 ## 📁 项目结构
@@ -248,7 +316,7 @@ secretKey = "your_secret_key"
 1. **架构**：仅支持 `arm64-v8a`（绝大多数现代 Android 手机）
 2. **Android 版本**：正式 Release APK 支持 Android 9.0+（API 28+）；Android 13+ 需要允许通知权限
 3. **frps 端**：需在 frps 上配置对应的 stcp/xtcp 代理，且对端设备需运行 frpc 并注册相同 secretKey
-4. **XUDP 全链路版本**：`frps`、XUDP proxy 端 `frpc`、XUDP visitor 端 `frpc` 必须全部使用兼容的 `GBitCat/frp-xudp`，推荐统一为当前内置的 `v0.71.0-v2`；不能只在 Android 端替换，也不要与官方 FRP 或其他 fork 混用
+4. **XUDP 全链路版本**：`frps`、XUDP proxy 端 `frpc`、XUDP visitor 端 `frpc` 必须全部使用兼容的 `GBitCat/frp-xudp`，推荐统一为当前内置的 `v0.72.0`；不能只在 Android 端替换，也不要与官方 FRP 或其他 fork 混用
 5. **后台驻留**：为保证长时间稳定连接，请允许通知权限、取消电池优化（应用内首次启动会引导跳转），部分国产 ROM 还需在系统设置中允许后台运行
 6. **内存显示**：卡片显示的是 App 与 frpc 进程的 RSS 占用，按设备总内存计算百分比
 7. **敏感画面**：Release 版启用 Android `FLAG_SECURE`，系统截图、录屏与最近任务缩略图会被阻止或隐藏；Debug 版明确不启用，便于开发测试

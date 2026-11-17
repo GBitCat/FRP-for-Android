@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'app_form_style.dart';
+
 class ConfigSectionTitle extends StatelessWidget {
   final String title;
 
@@ -36,10 +38,9 @@ class ConfigTextField extends StatelessWidget {
     onChanged: onChanged,
     obscureText: obscureText,
     keyboardType: keyboardType,
-    decoration: InputDecoration(
-      labelText: label,
-      hintText: hint,
-      border: const OutlineInputBorder(),
+    decoration: AppFormStyle.decoration(
+      label: label,
+      hint: hint,
       suffixIcon: suffixIcon,
     ),
   );

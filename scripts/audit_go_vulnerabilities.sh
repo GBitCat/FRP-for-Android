@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REQUIRED_GO_VERSION="go1.26.8"
+readonly REQUIRED_GO_VERSION="go1.26.11"
+# Keep frpc on its pinned patched toolchain without changing certificate builds.
+export GOTOOLCHAIN="$REQUIRED_GO_VERSION"
 readonly GOVULNCHECK_VERSION="v1.7.0"
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,6 +23,8 @@ GOBIN="$tool_dir" go install "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VER
 govulncheck="$tool_dir/govulncheck"
 
 (
+  # Audit certificate source with the same toolchain as its pinned binary.
+  export GOTOOLCHAIN=go1.26.8
   cd "$repo_dir/native/frpc_cert"
   go mod download
   go mod verify

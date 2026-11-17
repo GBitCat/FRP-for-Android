@@ -124,10 +124,10 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   }
 
   /// + 按钮：统一 FlClash 风格悬浮选项（毛玻璃 + 居中卡片）
-  void _showAddConfigMenu(BuildContext context) {
-    showFrostedDialog<void>(
+  Future<void> _showAddConfigMenu(BuildContext context) async {
+    final selected = await showFrostedDialog<_NewConfigKind>(
       context: context,
-      builder: (_) => FrostedCard(
+      builder: (dialogContext) => FrostedCard(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -146,12 +146,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                   .onSecondaryContainer,
               title: 'visitor.FormConfig',
               subtitle: 'Create a configuration with guided fields',
-              onTap: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ConfigEditScreen()),
-                );
-              },
+              onTap: () => Navigator.pop(dialogContext, _NewConfigKind.form),
             ),
             _MenuOption(
               icon: Icons.edit_note_outlined,
@@ -159,14 +154,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               iconForeground: Theme.of(context).colorScheme.onTertiaryContainer,
               title: 'Manual Config',
               subtitle: 'Write proxy or visitor TOML directly',
-              onTap: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const ManualConfigEditScreen(),
-                  ),
-                );
-              },
+              onTap: () => Navigator.pop(dialogContext, _NewConfigKind.manual),
             ),
             _MenuOption(
               icon: Icons.dns_outlined,
@@ -174,18 +162,32 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               iconForeground: Theme.of(context).colorScheme.onPrimaryContainer,
               title: 'Server Config',
               subtitle: 'Add a new server connection',
-              onTap: () {
-                Navigator.of(context).pop();
-                showFrostedDialog<void>(
-                  context: context,
-                  builder: (_) => ServerEditDialog(),
-                );
-              },
+              onTap: () => Navigator.pop(dialogContext, _NewConfigKind.server),
             ),
           ],
         ),
       ),
     );
+    if (!context.mounted || selected == null) return;
+    switch (selected) {
+      case _NewConfigKind.form:
+        await showFrostedDialog<int>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const ConfigEditScreen(asDialog: true),
+        );
+      case _NewConfigKind.manual:
+        await showFrostedDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const ManualConfigEditScreen(asDialog: true),
+        );
+      case _NewConfigKind.server:
+        await showFrostedDialog<void>(
+          context: context,
+          builder: (_) => ServerEditDialog(),
+        );
+    }
   }
 
   @override
@@ -261,6 +263,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     );
   }
 }
+
+enum _NewConfigKind { form, manual, server }
 
 class _MenuOption extends StatelessWidget {
   final IconData icon;

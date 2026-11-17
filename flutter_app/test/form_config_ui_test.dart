@@ -6,12 +6,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frp_app/models/frp_config.dart';
 import 'package:frp_app/models/server_config.dart';
+import 'package:frp_app/models/socks5_config.dart';
 import 'package:frp_app/screens/config_edit_screen.dart';
 import 'package:frp_app/screens/configs_screen.dart';
 import 'package:frp_app/screens/main_shell.dart';
 import 'package:frp_app/screens/manual_config_edit_screen.dart';
 import 'package:frp_app/services/certificates/certificate_models.dart';
 import 'package:frp_app/state/app_state.dart';
+import 'package:frp_app/theme.dart';
+import 'package:frp_app/widgets/app_dropdown_field.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> _enter(WidgetTester tester, String key, String value) async {
@@ -136,6 +139,82 @@ void main() {
     messenger.setMockMethodCallHandler(secureStoreChannel, null);
     messenger.setMockMethodCallHandler(engineChannel, null);
   });
+
+  for (final dark in [false, true]) {
+    testWidgets(
+      'shared fields retain the same height in ${dark ? "dark" : "light"} mode',
+      (tester) async {
+        final theme = dark
+            ? AppTheme.dark(Colors.blue)
+            : AppTheme.light(Colors.blue);
+        String? selected = 'tcp';
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: Scaffold(
+              body: Column(
+                children: [
+                  const TextField(
+                    key: ValueKey('shared_plain_input'),
+                    decoration: InputDecoration(labelText: 'Name'),
+                  ),
+                  TextField(
+                    key: const ValueKey('shared_password_input'),
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      suffixIcon: IconButton(
+                        onPressed: () {},
+                        icon: const Icon(Icons.visibility_outlined),
+                      ),
+                    ),
+                  ),
+                  AppDropdownButtonFormField<String>(
+                    key: const ValueKey('shared_dropdown'),
+                    initialValue: selected,
+                    decoration: const InputDecoration(labelText: 'Protocol'),
+                    items: const [
+                      DropdownMenuItem(value: 'tcp', child: Text('TCP')),
+                      DropdownMenuItem(value: 'udp', child: Text('UDP')),
+                    ],
+                    onChanged: (value) => selected = value,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        for (final key in [
+          'shared_plain_input',
+          'shared_password_input',
+          'shared_dropdown',
+        ]) {
+          expect(
+            tester.getSize(find.byKey(ValueKey(key))).height,
+            46,
+            reason: key,
+          );
+        }
+        final dropdown = tester.widget<DropdownButton<String>>(
+          find.descendant(
+            of: find.byKey(const ValueKey('shared_dropdown')),
+            matching: find.byWidgetPredicate(
+              (widget) => widget is DropdownButton<String>,
+            ),
+          ),
+        );
+        expect(dropdown.iconSize, 20);
+        expect(dropdown.borderRadius, BorderRadius.circular(16));
+        expect(theme.canvasColor, theme.colorScheme.surfaceContainerLow);
+        await tester.tap(find.byKey(const ValueKey('shared_dropdown')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('UDP').last);
+        await tester.pumpAndSettle();
+        expect(selected, 'udp');
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   test('initialization permanently scrubs legacy runtime TLS paths', () async {
     final legacy = jsonEncode([
@@ -290,7 +369,7 @@ void main() {
 
     final dialogScope = find.descendant(
       of: find.byType(ServerEditDialog),
-      matching: find.byType(PopScope),
+      matching: find.byWidgetPredicate((widget) => widget is PopScope),
     );
     expect(tester.widget<PopScope>(dialogScope).canPop, isFalse);
     expect(
@@ -354,7 +433,7 @@ void main() {
 
     final pageScope = find.descendant(
       of: find.byType(ManualConfigEditScreen),
-      matching: find.byType(PopScope),
+      matching: find.byWidgetPredicate((widget) => widget is PopScope),
     );
     expect(tester.widget<PopScope>(pageScope).canPop, isFalse);
     await tester.binding.handlePopRoute();
@@ -458,12 +537,7 @@ void main() {
     ]) {
       final field = tester.widget<TextField>(find.byKey(ValueKey(key)));
       expect(field.decoration?.isDense, isTrue, reason: '$key is compact');
-      expect(field.style?.fontSize, 14, reason: '$key uses unified text size');
-      expect(
-        field.decoration?.labelStyle?.fontSize,
-        14,
-        reason: '$key uses unified label size',
-      );
+      expect(field.style?.fontSize, 16, reason: '$key uses unified text size');
     }
 
     const controlKeys = [
@@ -473,7 +547,8 @@ void main() {
       'server_port',
       'server_token',
       'server_protocol',
-      'server_tcp_mux_control',
+      'server_wire_protocol',
+      'server_tcp_mux',
       'server_heartbeat_interval',
       'server_heartbeat_timeout',
       'server_keepalive',
@@ -482,7 +557,7 @@ void main() {
     for (final key in controlKeys) {
       expect(
         tester.getSize(find.byKey(ValueKey(key))).height,
-        44,
+        46,
         reason: '$key uses the unified control height',
       );
     }
@@ -495,7 +570,33 @@ void main() {
         ),
       ),
     );
-    expect(protocol.style?.fontSize, 14);
+    expect(protocol.style?.fontSize, 16);
+    expect(protocol.iconSize, 20);
+    expect(protocol.borderRadius, BorderRadius.circular(16));
+    final wireProtocol = tester.widget<AppDropdownButtonFormField<String>>(
+      find.byKey(const ValueKey('server_wire_protocol')),
+    );
+    expect(wireProtocol.initialValue, 'v2');
+    final tcpMux = tester.widget<AppDropdownButtonFormField<bool>>(
+      find.byKey(const ValueKey('server_tcp_mux')),
+    );
+    expect(tcpMux.initialValue, isTrue);
+    final tcpMuxDropdown = tester.widget<DropdownButton<bool>>(
+      find.descendant(
+        of: find.byKey(const ValueKey('server_tcp_mux')),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is DropdownButton<bool>,
+        ),
+      ),
+    );
+    expect(tcpMuxDropdown.style?.fontSize, 16);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('server_tcp_mux')),
+        matching: find.byType(Switch),
+      ),
+      findsNothing,
+    );
     for (final key in [
       'server_heartbeat_interval',
       'server_heartbeat_timeout',
@@ -509,19 +610,9 @@ void main() {
           ),
         ),
       );
-      expect(field.style?.fontSize, 14, reason: '$key uses unified text size');
-      final formField = tester.widget<DropdownButtonFormField<int>>(
-        find.byKey(ValueKey(key)),
-      );
-      expect(formField.decoration.labelStyle?.fontSize, 14);
+      expect(field.style?.fontSize, 16, reason: '$key uses unified text size');
+      expect(field.iconSize, 20, reason: '$key uses the shared dropdown icon');
     }
-    final tcpMuxLabel = tester.widget<Text>(
-      find.descendant(
-        of: find.byKey(const ValueKey('server_tcp_mux_control')),
-        matching: find.text('tcpMux'),
-      ),
-    );
-    expect(tcpMuxLabel.style?.fontSize, 14);
 
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('server_address'))).dy,
@@ -529,9 +620,11 @@ void main() {
     );
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('server_protocol'))).dy,
-      tester
-          .getTopLeft(find.byKey(const ValueKey('server_tcp_mux_control')))
-          .dy,
+      tester.getTopLeft(find.byKey(const ValueKey('server_wire_protocol'))).dy,
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('server_protocol'))).dy,
+      tester.getTopLeft(find.byKey(const ValueKey('server_tcp_mux'))).dy,
     );
     final timeRowY = tester
         .getTopLeft(find.byKey(const ValueKey('server_heartbeat_interval')))
@@ -562,6 +655,108 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('transport selections save and reload on a narrow phone', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    Future<void> openEditor() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => Center(
+                    child: ServerEditDialog(
+                      initial: appState.servers.single,
+                      certificateInventoryLoader: () async =>
+                          const CertificateInventory(),
+                    ),
+                  ),
+                ),
+                child: const Text('Open server editor'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open server editor'));
+      await tester.pumpAndSettle();
+    }
+
+    await openEditor();
+    final wireField = find.byKey(const ValueKey('server_wire_protocol'));
+    final tcpMuxField = find.byKey(const ValueKey('server_tcp_mux'));
+    expect(
+      tester.widget<AppDropdownButtonFormField<bool>>(tcpMuxField).initialValue,
+      isTrue,
+    );
+    expect(
+      tester.widget<AppDropdownButtonFormField<String>>(wireField).initialValue,
+      'v2',
+    );
+    await tester.ensureVisible(wireField);
+    await tester.tap(wireField);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('v1').last);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await tester.ensureVisible(tcpMuxField);
+    await tester.tap(tcpMuxField);
+    await tester.pumpAndSettle();
+    expect(find.text('Enabled'), findsWidgets);
+    expect(find.text('Disabled'), findsOneWidget);
+    await tester.tap(find.text('Disabled').last);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    final save = find.widgetWithText(FilledButton, 'Save');
+    await tester.runAsync(() async {
+      final result = Function.apply(
+        tester.widget<FilledButton>(save).onPressed!,
+        const [],
+      );
+      if (result is Future<void>) await result;
+    });
+    await tester.pumpAndSettle();
+    expect(appState.servers.single.wireProtocol, 'v1');
+    expect(appState.servers.single.tcpMux, isFalse);
+
+    await tester.runAsync(appState.retryInitialization);
+    expect(appState.servers.single.wireProtocol, 'v1');
+    expect(appState.servers.single.tcpMux, isFalse);
+    await tester.tap(find.text('Open server editor'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<AppDropdownButtonFormField<String>>(wireField).initialValue,
+      'v1',
+    );
+    expect(
+      tester.widget<AppDropdownButtonFormField<bool>>(tcpMuxField).initialValue,
+      isFalse,
+    );
+    await tester.ensureVisible(tcpMuxField);
+    await tester.tap(tcpMuxField);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Enabled').last);
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      final result = Function.apply(
+        tester.widget<FilledButton>(save).onPressed!,
+        const [],
+      );
+      if (result is Future<void>) await result;
+    });
+    await tester.pumpAndSettle();
+    expect(appState.servers.single.tcpMux, isTrue);
+    expect(appState.servers.single.wireProtocol, 'v1');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('bidirectional verification expands and saves mutual TLS', (
     tester,
   ) async {
@@ -586,7 +781,7 @@ void main() {
       const ValueKey('server_bidirectional_verification'),
     );
     expect(find.text('Bidirectional Verification'), findsOneWidget);
-    expect(tester.getSize(expansion).height, 44);
+    expect(tester.getSize(expansion).height, 46);
     expect(find.byKey(const ValueKey('server_tls_enabled')), findsNothing);
     expect(find.byKey(const ValueKey('server_tls_identity')), findsNothing);
 
@@ -600,7 +795,7 @@ void main() {
       tester
           .getSize(find.byKey(const ValueKey('server_tls_enabled_control')))
           .height,
-      44,
+      46,
     );
     await tester.ensureVisible(tlsSwitch);
     await tester.tap(tlsSwitch);
@@ -608,14 +803,13 @@ void main() {
 
     final serverName = find.byKey(const ValueKey('server_tls_server_name'));
     expect(serverName, findsOneWidget);
-    expect(tester.getSize(serverName).height, 44);
+    expect(tester.getSize(serverName).height, 46);
     final serverNameField = tester.widget<TextField>(serverName);
-    expect(serverNameField.style?.fontSize, 14);
-    expect(serverNameField.decoration?.labelStyle?.fontSize, 14);
+    expect(serverNameField.style?.fontSize, 16);
 
     final identityDropdown = find.byKey(const ValueKey('server_tls_identity'));
     expect(identityDropdown, findsOneWidget);
-    expect(tester.getSize(identityDropdown).height, 44);
+    expect(tester.getSize(identityDropdown).height, 46);
     expect(find.text('Client Certificate'), findsNothing);
     expect(find.text('Client Private Key'), findsNothing);
     expect(find.text('Trusted CA Certificate'), findsNothing);
@@ -1141,4 +1335,216 @@ void main() {
     expect(appState.configs.single.protocol, 'xtcp');
     expect(appState.configs.single.name, 'MuMuDev-ADB-xtcp');
   });
+
+  testWidgets(
+    'adding ports and protocols to a disabled SOCKS group preserves disabled state and settings',
+    (tester) async {
+      const socks = Socks5Config(
+        targetIp: '192.0.2.10',
+        username: 'alice',
+        password: 'socks-secret',
+        tcpPorts: [8080],
+      );
+      appState.configs = const [
+        FrpConfig(
+          id: 7,
+          name: 'Forward-xtcp-39001',
+          protocol: 'xtcp',
+          secretKey: 'shared-secret',
+          serverName: 'Peer-xtcp-39001',
+          bindPort: 39001,
+          serverId: 'SERVER01',
+          groupId: 77,
+          groupName: 'Forward',
+          isGroupPrimary: true,
+          enabled: false,
+          socks5: socks,
+        ),
+        FrpConfig(
+          id: 8,
+          name: 'Forward-xtcp-39002',
+          protocol: 'xtcp',
+          secretKey: 'shared-secret',
+          serverName: 'Peer-xtcp-39002',
+          bindPort: 39002,
+          serverId: 'SERVER01',
+          groupId: 77,
+          groupName: 'Forward',
+          enabled: false,
+          socks5: socks,
+        ),
+      ];
+      await tester.pumpWidget(
+        const MaterialApp(home: ConfigEditScreen(configId: 7)),
+      );
+      await tester.pumpAndSettle();
+      await _enter(tester, 'bind_ports_xtcp', '39001,39002,39003');
+      await _addProtocol(tester, 'xudp');
+      await _enter(tester, 'bind_ports_xudp', '39100');
+      await _save(tester);
+
+      expect(appState.configs, hasLength(4));
+      expect(appState.configs.every((config) => !config.enabled), isTrue);
+      expect(
+        appState.configs.every((config) => config.socks5 == socks),
+        isTrue,
+      );
+      expect(appState.configs.map((config) => config.id), containsAll([7, 8]));
+      expect(
+        appState.configs
+            .where((config) => config.protocol == 'xtcp')
+            .map((config) => config.bindPort)
+            .toSet(),
+        {39001, 39002, 39003},
+      );
+      expect(
+        appState.configs
+            .singleWhere((config) => config.protocol == 'xudp')
+            .bindPort,
+        39100,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'editing mixed SOCKS visitors keeps UDP fallback in group scope',
+    (tester) async {
+      const socks = Socks5Config(
+        targetIp: '127.0.0.1',
+        tcpPorts: [5513, 5514],
+        udpPorts: [5513, 5514],
+      );
+      appState.configs = const [
+        FrpConfig(
+          id: 7,
+          name: 'Forward-xtcp',
+          protocol: 'xtcp',
+          secretKey: 'shared-secret',
+          serverName: 'Peer-xtcp',
+          bindPort: 5511,
+          serverId: 'SERVER01',
+          groupId: 77,
+          groupName: 'SOCKS5 TCP + UDP',
+          isGroupPrimary: true,
+          useFallback: true,
+          fallbackTo: 'Forward-stcp-fallback',
+          socks5: socks,
+        ),
+        FrpConfig(
+          id: 8,
+          name: 'Forward-stcp-fallback',
+          protocol: 'stcp',
+          secretKey: 'shared-secret',
+          serverName: 'Peer-stcp',
+          bindPort: -1,
+          serverId: 'SERVER01',
+          groupId: 77,
+          groupName: 'SOCKS5 TCP + UDP',
+        ),
+        FrpConfig(
+          id: 9,
+          name: 'Forward-xudp',
+          protocol: 'xudp',
+          secretKey: 'shared-secret',
+          serverName: 'Peer-xudp',
+          bindPort: 5512,
+          serverId: 'SERVER01',
+          groupId: 77,
+          groupName: 'SOCKS5 TCP + UDP',
+          socks5: socks,
+        ),
+      ];
+      await tester.pumpWidget(
+        const MaterialApp(home: ConfigEditScreen(configId: 7)),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.ensureVisible(find.text('Configuration Preview'));
+      await tester.tap(find.text('Configuration Preview'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('type = "socks5_udp"'), findsOneWidget);
+      expect(find.textContaining('already used by a visitor'), findsNothing);
+      expect(find.textContaining('type = "sudp"'), findsNothing);
+
+      await _save(tester);
+      expect(appState.configs, hasLength(4));
+      expect(appState.configs.map((config) => config.groupId).toSet(), {77});
+      expect(
+        appState.configs.map((config) => config.id),
+        containsAll([7, 8, 9]),
+      );
+      expect(
+        appState.configs
+            .where(
+              (config) =>
+                  config.protocol == 'xtcp' || config.protocol == 'xudp',
+            )
+            .every((config) => config.socks5 == socks),
+        isTrue,
+      );
+      final runtime = appState.buildFullTomlFor(appState.servers.single);
+      expect(runtime, contains('type = "socks5_udp"'));
+      expect(runtime, isNot(contains('type = "sudp"')));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final groupId in [0, 77]) {
+    testWidgets('adding enabled SOCKS ports previews shared group $groupId', (
+      tester,
+    ) async {
+      const socks = Socks5Config(targetIp: '192.0.2.10', tcpPorts: [8080]);
+      final ports = groupId == 0 ? [39001] : [39001, 39002];
+      appState.configs = [
+        for (var i = 0; i < ports.length; i++)
+          FrpConfig(
+            id: 7 + i,
+            name: ports.length == 1
+                ? 'Forward-xtcp'
+                : 'Forward-xtcp-${ports[i]}',
+            protocol: 'xtcp',
+            secretKey: 'shared-secret',
+            serverName: ports.length == 1
+                ? 'Peer-xtcp'
+                : 'Peer-xtcp-${ports[i]}',
+            bindPort: ports[i],
+            serverId: 'SERVER01',
+            groupId: groupId,
+            groupName: 'Forward',
+            isGroupPrimary: groupId > 0 && i == 0,
+            socks5: socks,
+          ),
+      ];
+      await tester.pumpWidget(
+        const MaterialApp(home: ConfigEditScreen(configId: 7)),
+      );
+      await tester.pumpAndSettle();
+      await _enter(tester, 'bind_ports_xtcp', '39001,39002,39003');
+      expect(tester.takeException(), isNull);
+      await tester.ensureVisible(find.text('Configuration Preview'));
+      await tester.tap(find.text('Configuration Preview'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Incomplete configuration'), findsNothing);
+      expect(
+        find.textContaining('name = "Forward-xtcp-39003"'),
+        findsOneWidget,
+      );
+
+      await _save(tester);
+      expect(appState.configs, hasLength(3));
+      expect(appState.configs.every((config) => config.enabled), isTrue);
+      expect(
+        appState.configs.every((config) => config.socks5 == socks),
+        isTrue,
+      );
+      expect(
+        appState.configs.map((config) => config.groupId).toSet(),
+        hasLength(1),
+      );
+      expect(appState.configs.first.groupId, greaterThan(0));
+      expect(appState.configs.map((config) => config.id), contains(7));
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

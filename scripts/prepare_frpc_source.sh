@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly FRP_SOURCE_COMMIT="305ab02e14034d4152dd6780d9879718e96ad4f5"
-readonly FRP_SOURCE_ARCHIVE_SHA256="e658accc2ab0f239b12b3a7528c49d12efcb0377789ce3e7eb1f50c40225d16a"
+readonly FRP_SOURCE_COMMIT="e8731afd8a2b12765636368f762b99d121a97a26"
+readonly FRP_SOURCE_ARCHIVE_SHA256="ee7b84935e608df805c46a81c33266517ae1596919ad5b194fe6b3378c447603"
 readonly FRP_SOURCE_URL="https://github.com/GBitCat/frp-xudp/archive/${FRP_SOURCE_COMMIT}.tar.gz"
-
-repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-patch_file="$repo_dir/scripts/patches/frp-xudp-v0.71.0-v2-go-security.patch"
 
 if (( $# != 1 )); then
   printf 'Usage: %s OUTPUT_DIRECTORY\n' "$0" >&2
@@ -31,8 +28,5 @@ printf '%s  %s\n' "$FRP_SOURCE_ARCHIVE_SHA256" "$archive" |
 mkdir -p "$output_dir"
 tar --extract --gzip --file "$archive" --directory "$output_dir" \
   --strip-components=1 --no-same-owner --no-same-permissions
-
-git -C "$output_dir" apply --unidiff-zero --check "$patch_file"
-git -C "$output_dir" apply --unidiff-zero "$patch_file"
 
 printf 'frp source prepared: commit=%s path=%s\n' "$FRP_SOURCE_COMMIT" "$output_dir"
