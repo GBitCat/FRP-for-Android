@@ -259,21 +259,39 @@ void main() {
     }
   });
 
-  test('relay-only startup does not wait for a pending STUN probe', () async {
-    final release = Completer<StunProbeResult>();
-    final selector = StunServerSelector(
-      lookup: (_) async => [InternetAddress('192.0.2.1')],
-      probe: (_) => release.future,
-    );
-    final state = await stateWith(selector, protocol: 'stcp');
-    await state.start().timeout(const Duration(seconds: 1));
+  test(
+    'opening the app and starting a relay require no STUN traffic',
+    () async {
+      var lookups = 0;
+      var probes = 0;
+      final selector = StunServerSelector(
+        lookup: (_) async {
+          lookups++;
+          return [InternetAddress('192.0.2.1')];
+        },
+        probe: (_) async {
+          probes++;
+          return const StunProbeResult(StunProbeStatus.reachable, exitCode: 0);
+        },
+      );
+      final state = await stateWith(selector, protocol: 'stcp');
+      state.configs = [
+        ...state.configs,
+        state.configs.single.copyWith(
+          id: 2,
+          name: 'inactive-peer',
+          manualToml:
+              "[[visitors]]\nname = 'peer'\ntype = 'xtcp'\nenabled = false",
+        ),
+      ];
+      await state.start().timeout(const Duration(seconds: 1));
 
-    expect(startedConfigs, hasLength(1));
-    expect(startedConfigs.single, contains('type = "stcp"'));
-    expect(state.running, isTrue);
-    release.complete(
-      const StunProbeResult(StunProbeStatus.timeout, exitCode: 1),
-    );
-    await selector.prepare();
-  });
+      expect(startedConfigs, hasLength(1));
+      expect(startedConfigs.single, contains('type = "stcp"'));
+      expect(startedConfigs.single, isNot(contains('natHoleStunServer')));
+      expect(state.running, isTrue);
+      expect(lookups, 0);
+      expect(probes, 0);
+    },
+  );
 }

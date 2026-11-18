@@ -24,12 +24,13 @@ import java.io.InputStreamReader
 import java.io.Reader
 import java.net.InetAddress
 import java.net.Inet6Address
-import java.util.ArrayDeque
 import java.util.Arrays
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -54,6 +55,7 @@ class FrpcService : Service() {
         private const val KEY_WAS_RUNNING = "was_running"
         private const val KEY_LAST_CONFIG_PAYLOAD = "last_config_payload"
         private const val KEY_PENDING_START_ID = "pending_start_id"
+        private const val KEY_PENDING_PAYLOAD = "pending_config_payload"
         private const val ACTION_START = "com.frp.frp_app.action.START"
         private const val ACTION_STOP = "com.frp.frp_app.action.STOP"
         private const val ACTION_RESTORE = "com.frp.frp_app.action.RESTORE"
@@ -61,22 +63,30 @@ class FrpcService : Service() {
         private const val EXTRA_START_ID = "start_id"
         private const val RUNTIME_CONFIG_NAME = "frpc-runtime.toml"
         private const val MAX_CONFIG_BYTES = 512 * 1024
-        // Intent strings are parcelled as UTF-16. Leave headroom below Binder's
-        // transaction limit even for an ASCII envelope (two parcel bytes per byte).
         internal const val MAX_SOCKS_RUNTIME_PAYLOAD_BYTES = 384 * 1024
         private const val MAX_LOG_LINE_CHARS = RuntimeLogSanitizer.MAX_LOG_LINE_CHARS
         private const val MAX_APP_STATUS_ENTRIES = 1024
         private const val TRUNCATED_LOG_SUFFIX = RuntimeLogSanitizer.TRUNCATED_LOG_SUFFIX
         private const val DEFAULT_STUN_PORT = 3478
         private val runIntentLock = Any()
+        private val runtimeConfigLock = Any()
+        private val runCommandExecutor = ThreadPoolExecutor(
+            0, 1, 30, TimeUnit.SECONDS, LinkedBlockingQueue(),
+        ) { task -> Thread(task, "frpc-run-intent").apply { isDaemon = true } }
         private val stunEndpointPattern = Regex(
             """(?m)^(\s*natHoleStunServer\s*=\s*)\"([^\"\r\n]+)\"(\s*(?:#.*)?)$""",
+        )
+        // Older encrypted run intents may still include STUN for a relay-only
+        // configuration. Avoid doing DNS on the serial service worker for them.
+        private val peerToPeerType = Regex(
+            """(?m)^\s*(?:type|"type"|'type')\s*=\s*["']{1,3}\s*(?:xtcp|xudp)\s*["']{1,3}\s*(?:#.*)?$""",
         )
 
         private data class RunIntentState(
             val desired: Boolean,
             val requestId: String?,
             val encryptedPayload: String?,
+            val pendingPayload: String?,
         )
 
         internal fun classifyStartRequest(
@@ -174,8 +184,10 @@ class FrpcService : Service() {
             // first occurrence so malformed imported TOML cannot queue an
             // unbounded number of blocking DNS lookups on processExecutor.
             val match = stunEndpointPattern.find(config) ?: return config
+            if (!peerToPeerType.containsMatchIn(config)) return config
             val endpoint = parseStunEndpoint(match.groupValues[2])
                 ?: return config
+            if (android.util.Patterns.IP_ADDRESS.matcher(endpoint.host).matches()) return config
             val resolved = resolveHost(endpoint.host)
             val authority = StunEndpoint(resolved, endpoint.port).authority()
             val replacement = "${match.groupValues[1]}\"$authority\"${match.groupValues[3]}"
@@ -186,13 +198,20 @@ class FrpcService : Service() {
 
         internal fun sanitizeLogLine(raw: String): String = RuntimeLogSanitizer.sanitize(raw)
 
-        internal fun readBoundedLogLines(reader: Reader, onLine: (String) -> Unit) {
+        internal fun readBoundedLogLines(
+            reader: Reader,
+            onFirstLine: (() -> Unit)? = null,
+            onLine: (String) -> Unit,
+        ) {
             val buffer = CharArray(1024)
             val line = StringBuilder(MAX_LOG_LINE_CHARS)
+            var firstLine = onFirstLine
             var truncated = false
             var afterCarriageReturn = false
 
             fun emitLine() {
+                firstLine?.invoke()
+                firstLine = null
                 if (truncated) {
                     line.setLength(MAX_LOG_LINE_CHARS - TRUNCATED_LOG_SUFFIX.length)
                     line.append(TRUNCATED_LOG_SUFFIX)
@@ -250,27 +269,123 @@ class FrpcService : Service() {
          */
         @Volatile
         var channel: MethodChannel? = null
+            set(value) = synchronized(logsLock) {
+                if (field !== value) {
+                    field = value
+                    logSubscription = null
+                    logUiStarted = false
+                }
+            }
 
         // Include diagnostics produced before the foreground service starts,
         // and retain them across service restarts within this app process.
         private val recentLogs = ArrayDeque<String>(2000)
+        private const val LOG_BATCH_SIZE = 64
+        private var nextLogId = 1L
         private val logsLock = Any()
         private val logHandler by lazy { Handler(Looper.getMainLooper()) }
+        private class LogSubscription(val channel: MethodChannel, var nextId: Long) {
+            var deliveryPending = false
+            var deliveryFailed = false
+        }
+        private var logSubscription: LogSubscription? = null
+        private var logUiStarted = false
+
+        internal fun setLogUiStarted(owner: MethodChannel?, started: Boolean) = synchronized(logsLock) {
+            if (owner != null && channel === owner) {
+                logUiStarted = started
+                val subscription = logSubscription
+                if (started && subscription != null) {
+                    subscription.deliveryFailed = false
+                    if (subscription.nextId < nextLogId) scheduleLogBatch(subscription)
+                }
+            }
+        }
+
+        internal fun setLogSubscription(owner: MethodChannel, enabled: Boolean) = synchronized(logsLock) {
+            if (channel === owner) {
+                if (!enabled) logSubscription = null
+                else if (logSubscription == null) logSubscription = LogSubscription(owner, nextLogId)
+            }
+        }
+
+        // Called with logsLock held. The main queue holds at most one wake-up
+        // for the reader, regardless of how quickly frpc writes to its ring.
+        private fun scheduleLogBatch(subscription: LogSubscription) {
+            if (subscription.deliveryPending || subscription.deliveryFailed) return
+            subscription.deliveryPending = true
+            logHandler.post { deliverLogBatch(subscription) }
+        }
+
+        private fun deliverLogBatch(subscription: LogSubscription) {
+            val (firstId, lines) = synchronized(logsLock) {
+                // A queued callback can outlive its viewer or Activity.
+                if (logSubscription !== subscription) return
+                if (!logUiStarted) {
+                    subscription.deliveryPending = false
+                    return
+                }
+                readLogBatch(subscription.nextId)
+            }
+            // Wait for Dart to consume this batch. A stalled Flutter thread
+            // cannot accumulate serialized copies beyond the in-flight batch.
+            val reply = object : MethodChannel.Result {
+                override fun success(result: Any?) = finishLogBatch(subscription, firstId + lines.size)
+                override fun error(code: String, message: String?, details: Any?) = finishLogBatch(subscription, null)
+                override fun notImplemented() = finishLogBatch(subscription, null)
+            }
+            try {
+                subscription.channel.invokeMethod("onLogBatch", mapOf("firstId" to firstId, "lines" to lines), reply)
+            } catch (_: RuntimeException) {
+                finishLogBatch(subscription, null)
+            }
+        }
+
+        private fun finishLogBatch(subscription: LogSubscription, deliveredTo: Long?) = synchronized(logsLock) {
+            if (logSubscription !== subscription) return@synchronized
+            subscription.deliveryPending = false
+            if (deliveredTo != null) {
+                subscription.nextId = deliveredTo
+                if (logUiStarted && deliveredTo < nextLogId) scheduleLogBatch(subscription)
+            } else {
+                // Retain the cursor for reopening or resuming the viewer.
+                // More logs alone must not repeatedly transmit a rejected batch.
+                subscription.deliveryFailed = true
+            }
+        }
+
+        internal fun readLogBatch(cursor: Long): Pair<Long, List<String>> = synchronized(logsLock) {
+            val oldestId = nextLogId - recentLogs.size
+            val firstId = cursor.coerceIn(oldestId, nextLogId)
+            val count = minOf(nextLogId - firstId, LOG_BATCH_SIZE.toLong()).toInt()
+            val offset = (firstId - oldestId).toInt()
+            firstId to List(count) { recentLogs[offset + it] }
+        }
 
         internal fun readRecentLogs(): String = synchronized(logsLock) {
             recentLogs.joinToString("\n")
         }
 
+        internal fun readLogSnapshot(): Map<String, Any> = synchronized(logsLock) {
+            mapOf("firstId" to nextLogId - recentLogs.size, "lines" to recentLogs.toList())
+        }
+
         internal fun recordLog(raw: String): String {
             val line = sanitizeLogLine(raw)
             synchronized(logsLock) {
+                val id = nextLogId++
+                if (recentLogs.size == 2000) recentLogs.removeFirst()
                 recentLogs.addLast(line)
-                if (recentLogs.size > 2000) recentLogs.removeFirst()
                 // Queue in the same order as the snapshot, even when frpc,
                 // STUN and SOCKS workers report concurrently.
-                val ch = channel
-                if (ch != null) logHandler.post {
-                    if (channel === ch) runCatching { ch.invokeMethod("onLog", line) }
+                if (BuildConfig.BUILD_TYPE == "release") {
+                    val subscription = logSubscription
+                    if (logUiStarted && subscription != null) scheduleLogBatch(subscription)
+                } else {
+                    val ch = channel
+                    if (ch != null) logHandler.post {
+                        if (channel === ch) runCatching { ch.invokeMethod("onLog", listOf(id, line)) }
+                    }
                 }
             }
             return line
@@ -281,6 +396,20 @@ class FrpcService : Service() {
 
         @Volatile
         internal var beforeStopWorkerForTest: (() -> Unit)? = null
+
+        internal fun submitRunCommand(context: Context, result: MethodChannel.Result, command: (Context) -> Boolean) {
+            val app = context.applicationContext
+            val reply = MainThreadResult(result)
+            // Keep Flutter's submission order across Activity recreation and release the idle worker.
+            runCommandExecutor.execute {
+                try {
+                    reply.success(command(app))
+                } catch (error: Exception) {
+                    Log.e("FrpEngine", "unable to process frpc command", error)
+                    reply.success(false)
+                }
+            }
+        }
 
         /** 提交用户启动请求，实际进程启动在 onStartCommand 中串行执行。 */
         fun start(
@@ -313,43 +442,33 @@ class FrpcService : Service() {
             ) return false
             val startId = UUID.randomUUID().toString()
             val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
-            val startWrite = synchronized(runIntentLock) {
-                val previous = RunIntentState(
-                    desired = prefs.getBoolean(KEY_WAS_RUNNING, false),
-                    requestId = prefs.getString(KEY_PENDING_START_ID, null),
-                    encryptedPayload = prefs.getString(KEY_LAST_CONFIG_PAYLOAD, null),
-                )
+            return synchronized(runIntentLock) {
+                val previous = readRunIntent(prefs)
                 val recorded = try {
                     commitAttempt(
                         prefs.edit()
                             .putBoolean(KEY_WAS_RUNNING, true)
-                            .putString(KEY_PENDING_START_ID, startId),
+                            .putString(KEY_PENDING_START_ID, startId)
+                            .putString(KEY_PENDING_PAYLOAD, SecureStringCodec.encrypt(configContent)),
                     )
                 } catch (error: Exception) {
                     Log.e("FrpEngine", "unable to persist pending run intent", error)
                     false
                 }
-                if (!recorded) restoreRunIntent(prefs, previous)
-                previous to recorded
-            }
-            if (!startWrite.second) return false
-            return try {
-                startServiceIntent(
-                    context,
-                    Intent(context, FrpcService::class.java)
-                        .setAction(ACTION_START)
-                        .putExtra(EXTRA_CONFIG_CONTENT, configContent)
-                        .putExtra(EXTRA_START_ID, startId)
-                )
-                true
-            } catch (e: Exception) {
-                synchronized(runIntentLock) {
-                    if (prefs.getString(KEY_PENDING_START_ID, null) == startId) {
-                        restoreRunIntent(prefs, startWrite.first)
-                    }
+                if (!recorded) {
+                    restoreRunIntent(prefs, previous)
+                    return@synchronized false
                 }
-                Log.e("FrpEngine", "unable to schedule frpc service", e)
-                false
+                // Recovery must not claim this new pending request until Android accepts delivery.
+                try {
+                    startServiceIntent(context, Intent(context, FrpcService::class.java)
+                        .setAction(ACTION_START).putExtra(EXTRA_START_ID, startId))
+                    true
+                } catch (e: Exception) {
+                    restoreRunIntent(prefs, previous)
+                    Log.e("FrpEngine", "unable to schedule frpc service", e)
+                    false
+                }
             }
         }
 
@@ -361,8 +480,9 @@ class FrpcService : Service() {
         }
 
         private fun startServiceIntent(context: Context, intent: Intent) {
-            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
-            else context.startService(intent)
+            val component = if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
+                else context.startService(intent)
+            checkNotNull(component) { "Android could not resolve the frpc service" }
         }
 
         /** 停止用户运行意图，即使 Service 还没有完成创建也能生效。 */
@@ -406,9 +526,13 @@ class FrpcService : Service() {
         internal fun runtimeConfigFile(context: Context): File =
             File(context.noBackupFilesDir, RUNTIME_CONFIG_NAME)
 
-        private fun deleteRuntimeConfig(context: Context) {
-            runtimeConfigFile(context).delete()
-            File(context.noBackupFilesDir, "$RUNTIME_CONFIG_NAME.pending").delete()
+        private fun deleteRuntimeConfig(context: Context): Unit = synchronized(runtimeConfigLock) {
+            // A previous service can finish its teardown on a different executor.
+            val owner = instance
+            if (owner == null || owner === context) {
+                runtimeConfigFile(context).delete()
+                File(context.noBackupFilesDir, "$RUNTIME_CONFIG_NAME.pending").delete()
+            }
         }
 
         internal fun runtimePayloadFits(value: String): Boolean {
@@ -433,12 +557,17 @@ class FrpcService : Service() {
          * - 服务存在但 frpc 进程异常退出：自动重启 frpc
          * - 服务与 frpc 均正常：不做任何事（避免回到 App 时重启 frpc 导致断连）
          */
-        fun ensureRunning(context: Context) {
+        fun ensureRunning(context: Context, afterBoot: Boolean = false) {
             val svc = instance
             if (svc == null) {
                 val state = readRunIntent(context)
-                if (state.desired && state.requestId == null) {
-                    if (state.encryptedPayload.isNullOrEmpty()) {
+                if (afterBoot && state.desired && state.requestId != null && state.pendingPayload == null) {
+                    // Older releases held this request's only config in a service Intent lost at reboot.
+                    if (abandonRunIntentIfCurrent(context, state.requestId)) deleteRuntimeConfig(context)
+                    return
+                }
+                if (state.desired && (state.requestId == null || state.pendingPayload != null)) {
+                    if (state.requestId == null && state.encryptedPayload.isNullOrEmpty()) {
                         abandonRunIntentIfCurrent(context, requestId = null)
                         deleteRuntimeConfig(context)
                     } else {
@@ -460,12 +589,15 @@ class FrpcService : Service() {
         private fun readRunIntent(context: Context): RunIntentState =
             synchronized(runIntentLock) {
                 val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
-                RunIntentState(
-                    desired = prefs.getBoolean(KEY_WAS_RUNNING, false),
-                    requestId = prefs.getString(KEY_PENDING_START_ID, null),
-                    encryptedPayload = prefs.getString(KEY_LAST_CONFIG_PAYLOAD, null),
-                )
+                readRunIntent(prefs)
             }
+
+        private fun readRunIntent(prefs: SharedPreferences) = RunIntentState(
+            desired = prefs.getBoolean(KEY_WAS_RUNNING, false),
+            requestId = prefs.getString(KEY_PENDING_START_ID, null),
+            encryptedPayload = prefs.getString(KEY_LAST_CONFIG_PAYLOAD, null),
+            pendingPayload = prefs.getString(KEY_PENDING_PAYLOAD, null),
+        )
 
         private fun isCurrentRunIntent(context: Context, requestId: String?): Boolean {
             val state = readRunIntent(context)
@@ -482,16 +614,13 @@ class FrpcService : Service() {
         ): Boolean =
             synchronized(runIntentLock) {
                 val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
-                val previous = RunIntentState(
-                    desired = prefs.getBoolean(KEY_WAS_RUNNING, false),
-                    requestId = prefs.getString(KEY_PENDING_START_ID, null),
-                    encryptedPayload = prefs.getString(KEY_LAST_CONFIG_PAYLOAD, null),
-                )
+                val previous = readRunIntent(prefs)
                 val cleared = try {
                     commitAttempt(
                         prefs.edit()
                             .putBoolean(KEY_WAS_RUNNING, false)
                             .remove(KEY_LAST_CONFIG_PAYLOAD)
+                            .remove(KEY_PENDING_PAYLOAD)
                             .remove(KEY_PENDING_START_ID),
                     )
                 } catch (error: Exception) {
@@ -512,15 +641,9 @@ class FrpcService : Service() {
             try {
                 val restored = prefs.edit()
                     .putBoolean(KEY_WAS_RUNNING, previous.desired)
-                    .apply {
-                        if (previous.requestId == null) remove(KEY_PENDING_START_ID)
-                        else putString(KEY_PENDING_START_ID, previous.requestId)
-                        if (previous.encryptedPayload == null) {
-                            remove(KEY_LAST_CONFIG_PAYLOAD)
-                        } else {
-                            putString(KEY_LAST_CONFIG_PAYLOAD, previous.encryptedPayload)
-                        }
-                    }
+                    .putString(KEY_PENDING_START_ID, previous.requestId)
+                    .putString(KEY_PENDING_PAYLOAD, previous.pendingPayload)
+                    .putString(KEY_LAST_CONFIG_PAYLOAD, previous.encryptedPayload)
                     .commit()
                 if (!restored) {
                     Log.e("FrpEngine", "unable to persist restored run intent")
@@ -546,11 +669,7 @@ class FrpcService : Service() {
         ): Boolean =
             synchronized(runIntentLock) {
                 val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
-                val previous = RunIntentState(
-                    desired = prefs.getBoolean(KEY_WAS_RUNNING, false),
-                    requestId = prefs.getString(KEY_PENDING_START_ID, null),
-                    encryptedPayload = prefs.getString(KEY_LAST_CONFIG_PAYLOAD, null),
-                )
+                val previous = readRunIntent(prefs)
                 val matches = previous.desired && if (requestId == null) {
                     previous.requestId == null
                 } else {
@@ -562,6 +681,7 @@ class FrpcService : Service() {
                         prefs.edit()
                             .putBoolean(KEY_WAS_RUNNING, false)
                             .remove(KEY_LAST_CONFIG_PAYLOAD)
+                            .remove(KEY_PENDING_PAYLOAD)
                             .remove(KEY_PENDING_START_ID),
                     )
                 } catch (error: Exception) {
@@ -578,11 +698,7 @@ class FrpcService : Service() {
             encryptedPayload: String,
         ): Boolean = synchronized(runIntentLock) {
             val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
-            val previous = RunIntentState(
-                desired = prefs.getBoolean(KEY_WAS_RUNNING, false),
-                requestId = prefs.getString(KEY_PENDING_START_ID, null),
-                encryptedPayload = prefs.getString(KEY_LAST_CONFIG_PAYLOAD, null),
-            )
+            val previous = readRunIntent(prefs)
             val matches = previous.desired && if (requestId == null) {
                 previous.requestId == null
             } else {
@@ -592,6 +708,7 @@ class FrpcService : Service() {
             val committed = try {
                 prefs.edit()
                     .putString(KEY_LAST_CONFIG_PAYLOAD, encryptedPayload)
+                    .remove(KEY_PENDING_PAYLOAD)
                     .remove(KEY_PENDING_START_ID)
                     .commit()
             } catch (error: Exception) {
@@ -642,8 +759,8 @@ class FrpcService : Service() {
         // A previous app-process crash may have happened before the normal
         // first-log/10-second deletion. No child exists yet, so remove that
         // stale plaintext configuration before accepting a new request.
-        deleteRuntimeConfig(this)
         instance = this
+        deleteRuntimeConfig(this)
         registerNetworkMonitor()
         healthHandler = Handler(Looper.getMainLooper())
         healthHandler?.postDelayed(healthRunnable, 15_000)
@@ -655,7 +772,6 @@ class FrpcService : Service() {
         startForeground(NOTIF_ID, buildNotification("FRPC 正在运行"))
         return when (intent?.action) {
             ACTION_START -> {
-                val configContent = intent.getStringExtra(EXTRA_CONFIG_CONTENT)
                 val requestId = intent.getStringExtra(EXTRA_START_ID)
                 val state = readRunIntent(this)
                 when (classifyStartRequest(
@@ -667,7 +783,13 @@ class FrpcService : Service() {
                     StartRequestDisposition.START_PENDING -> {
                         if (!submitProcessTask {
                                 runDebugTestHook(beforeStartWorkerForTest)
-                                if (!startFrpcInternal(configContent, requestId = requestId)) {
+                                val started = if (state.pendingPayload != null) {
+                                    startFromEncryptedPayload(state.pendingPayload, requestId)
+                                } else {
+                                    // Older releases delivered the pending config inside their Intent.
+                                    startFrpcInternal(intent.getStringExtra(EXTRA_CONFIG_CONTENT), requestId = requestId)
+                                }
+                                if (!started && !isRunRequested(this)) {
                                     stopAfterFailedRequest(startId, "FRPC 启动失败")
                                 }
                             }
@@ -693,7 +815,9 @@ class FrpcService : Service() {
                         START_REDELIVER_INTENT
                     }
                     StartRequestDisposition.REJECT -> {
-                        stopAfterFailedRequest(startId, "FRPC 启动失败")
+                        if (!state.desired || state.requestId == null) {
+                            stopAfterFailedRequest(startId, "FRPC 启动失败")
+                        }
                         START_NOT_STICKY
                     }
                 }
@@ -787,27 +911,33 @@ class FrpcService : Service() {
         if (isFrpcRunning()) return
         if (System.currentTimeMillis() - lastStartMs < 10_000) return
         val state = readRunIntent(this)
-        if (!state.desired || state.requestId != null) return
-        val payload = state.encryptedPayload
+        if (!state.desired) return
+        // A reboot can drop the Android service delivery after the pending config was persisted.
+        val payload = if (state.requestId == null) state.encryptedPayload else state.pendingPayload ?: return
         if (payload.isNullOrEmpty()) {
             Log.e("FrpEngine", "recovery configuration is missing")
-            abandonRunIntentIfCurrent(this, requestId = null)
-            deleteRuntimeConfig(this)
+            if (abandonRunIntentIfCurrent(this, state.requestId)) deleteRuntimeConfig(this)
             return
         }
-        try {
-            startFrpcInternal(SecureStringCodec.decrypt(payload), payload)
+        startFromEncryptedPayload(payload, state.requestId)
+    }
+
+    private fun startFromEncryptedPayload(payload: String, requestId: String?): Boolean {
+        if (!isCurrentRunIntent(this, requestId)) return false
+        val content = try {
+            SecureStringCodec.decrypt(payload)
         } catch (e: Exception) {
-            Log.e("FrpEngine", "unable to decrypt recovery configuration", e)
-            abandonRunIntentIfCurrent(this, requestId = null)
-            deleteRuntimeConfig(this)
+            Log.e("FrpEngine", "unable to decrypt runtime configuration", e)
+            if (abandonRunIntentIfCurrent(this, requestId)) deleteRuntimeConfig(this)
+            return false
         }
+        return startFrpcInternal(content, payload, requestId)
     }
 
     private fun hasRecoverableRunningIntent(): Boolean {
         val state = readRunIntent(this)
-        return state.desired && state.requestId == null &&
-            !state.encryptedPayload.isNullOrEmpty()
+        return state.desired && if (state.requestId == null) !state.encryptedPayload.isNullOrEmpty()
+            else !state.pendingPayload.isNullOrEmpty()
     }
 
     /** frpc 意外退出后延迟自动重启（节流：10 秒内不重复启动） */
@@ -853,8 +983,22 @@ class FrpcService : Service() {
             // STUN 域名解析为 IP（Android 上 Go DNS 走 [::1]:53 会被拒）
             val patchedCfg = patchStunEndpoints(configContent)
             if (destroying.get() || !isCurrentRunIntent(this, requestId)) return false
-            if (payload.forwards.isNotEmpty()) {
-                val forwarder = Socks5Forwarder(payload.forwards, report = { message ->
+            val endpointAuth = if (payload.forwards.isEmpty()) null else FrpcEndpointAuth()
+            val cfgFile = writeRuntimeConfig(patchedCfg)
+            val pb = ProcessBuilder(frpc.absolutePath, "-c", cfgFile.absolutePath)
+            pb.environment()["GODEBUG"] = "netdns=go"
+            pb.environment()["RES_OPTIONS"] = "ndots:1"
+            pb.environment()["RESOLV_CONF"] = resolv.absolutePath
+            pb.redirectErrorStream(true)
+            val process = endpointAuth?.start(pb, payload.forwards) ?: pb.start()
+            frpcProcess = process
+            frpcPid = pidOf(process)
+            if (destroying.get() || !isCurrentRunIntent(this, requestId)) {
+                stopFrpcInternal(deleteConfig = true)
+                return false
+            }
+            if (endpointAuth != null) {
+                val forwarder = Socks5Forwarder(payload.forwards, endpointAuth = endpointAuth, report = { message ->
                     // Final traffic snapshots can arrive after the forwarder
                     // field is cleared. These diagnostics have stable owners
                     // and must not feed the frpc status parser (names are user text).
@@ -862,19 +1006,6 @@ class FrpcService : Service() {
                 })
                 socks5Forwarder = forwarder
                 forwarder.start()
-            }
-            val cfgFile = writeRuntimeConfig(patchedCfg)
-            val pb = ProcessBuilder(frpc.absolutePath, "-c", cfgFile.absolutePath)
-            pb.environment()["GODEBUG"] = "netdns=go"
-            pb.environment()["RES_OPTIONS"] = "ndots:1"
-            pb.environment()["RESOLV_CONF"] = resolv.absolutePath
-            pb.redirectErrorStream(true)
-            val process = pb.start()
-            frpcProcess = process
-            frpcPid = pidOf(process)
-            if (destroying.get() || !isCurrentRunIntent(this, requestId)) {
-                stopFrpcInternal(deleteConfig = true)
-                return false
             }
             lastStartMs = System.currentTimeMillis()
             Log.d("FrpEngine", "frpc started, pid=$frpcPid")
@@ -890,9 +1021,13 @@ class FrpcService : Service() {
             Thread {
                 try {
                     InputStreamReader(process.inputStream).use { reader ->
-                        readBoundedLogLines(reader) { line ->
+                        readBoundedLogLines(reader, onFirstLine = {
+                            // Serialize the ownership check and unlink with stop/restart.
+                            submitProcessTask {
+                                if (instance === this && frpcProcess === process) deleteRuntimeConfig(this)
+                            }
+                        }) { line ->
                             if (instance === this && frpcProcess === process) {
-                                deleteRuntimeConfig(this)
                                 onFrpcLine(line)
                             }
                         }
@@ -931,7 +1066,7 @@ class FrpcService : Service() {
             }
             mainHandler.postDelayed({
                 submitProcessTask {
-                    if (frpcProcess === process && processIsAlive(process)) {
+                    if (instance === this && frpcProcess === process && processIsAlive(process)) {
                         deleteRuntimeConfig(this)
                     }
                 }
@@ -1147,7 +1282,8 @@ class FrpcService : Service() {
         }
     }
 
-    private fun writeRuntimeConfig(content: String): File {
+    private fun writeRuntimeConfig(content: String): File = synchronized(runtimeConfigLock) {
+        check(instance === this && !destroying.get()) { "service no longer owns runtime config" }
         val target = runtimeConfigFile(this)
         val pending = File(noBackupFilesDir, "$RUNTIME_CONFIG_NAME.pending")
         pending.delete()
@@ -1160,7 +1296,7 @@ class FrpcService : Service() {
         pending.writeText(content)
         if (target.exists()) check(target.delete()) { "unable to replace runtime config" }
         check(pending.renameTo(target)) { "unable to install runtime config" }
-        return target
+        target
     }
 
     private fun onFrpcLine(raw: String) {

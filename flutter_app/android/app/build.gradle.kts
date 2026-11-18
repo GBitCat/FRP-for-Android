@@ -47,7 +47,8 @@ require(targetAbi in supportedBuildAbis) {
 
 android {
     namespace = "com.frp.frp_app"
-    compileSdk = flutter.compileSdkVersion
+    buildFeatures { buildConfig = true }
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -58,7 +59,7 @@ android {
     defaultConfig {
         applicationId = "com.frp.frp_app"
         minSdk = releaseMinSdk ?: flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 37
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

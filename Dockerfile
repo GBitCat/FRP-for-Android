@@ -42,12 +42,12 @@ RUN curl -fsSL "https://storage.googleapis.com/flutter_infra_release/releases/st
     && flutter config --no-analytics \
     && flutter --version
 
-ARG CMDLINE_TOOLS_VERSION=13114758
-ARG CMDLINE_TOOLS_SHA256=7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee
+ARG CMDLINE_TOOLS_VERSION=15859902
+ARG CMDLINE_TOOLS_SHA256=4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583
 ARG ANDROID_COMPAT_PLATFORM=35
-ARG ANDROID_PLATFORM=36
+ARG ANDROID_PLATFORM=37.0
 ARG ANDROID_COMPAT_BUILD_TOOLS=35.0.0
-ARG ANDROID_BUILD_TOOLS=36.0.0
+ARG ANDROID_BUILD_TOOLS=37.0.0
 ARG ANDROID_NDK=28.2.13676358
 ARG ANDROID_CMAKE=3.22.1
 RUN curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" -o /tmp/cmdline-tools.zip \
@@ -60,8 +60,10 @@ RUN curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-
     && sdkmanager --install \
         "platform-tools" \
         "platforms;android-${ANDROID_COMPAT_PLATFORM}" \
+        "platforms;android-36" \
         "platforms;android-${ANDROID_PLATFORM}" \
         "build-tools;${ANDROID_COMPAT_BUILD_TOOLS}" \
+        "build-tools;36.0.0" \
         "build-tools;${ANDROID_BUILD_TOOLS}" \
         "ndk;${ANDROID_NDK}" \
         "cmake;${ANDROID_CMAKE}"

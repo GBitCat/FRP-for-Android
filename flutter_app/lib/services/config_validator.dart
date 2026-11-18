@@ -3,6 +3,18 @@ import '../models/frp_config.dart';
 class ConfigValidator {
   const ConfigValidator._();
 
+  /// Disabled entries can be stored for later completion. Apply the same
+  /// requirements to local snapshots and both sides of a backup round trip.
+  static String? validateStored(
+    FrpConfig config, {
+    bool redacted = false,
+    bool legacy = false,
+  }) => validate(
+    config,
+    allowMissingSecrets: redacted || !config.enabled,
+    allowIncompleteLegacy: legacy || !config.enabled,
+  );
+
   static String? validate(
     FrpConfig config, {
     bool allowMissingSecrets = false,

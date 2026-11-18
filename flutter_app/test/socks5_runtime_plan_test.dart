@@ -37,6 +37,30 @@ FrpConfig visitor(
 );
 
 void main() {
+  test(
+    'manual visitor and plugin listeners participate in collision checks',
+    () {
+      final socks = visitor('app', socks5: settings.copyWith(udpPorts: []));
+      final manual = visitor('manual', id: 2, socks5: null, groupId: 0);
+      Socks5RuntimePlan plan(String source) =>
+          Socks5RuntimePlan.build([socks, manual.copyWith(manualToml: source)]);
+      const tcp = "[['visitors']]\n\"type\" = 'stcp'\n'bindPort' = 8_080";
+      expect(() => plan(tcp), throwsFormatException);
+      expect(() => plan("$tcp\nbindAddr='0.0.0.0'"), throwsFormatException);
+      expect(() => plan("$tcp\nbindAddr='127.0.0.2'"), returnsNormally);
+      expect(() => plan('$tcp\nenabled=false'), returnsNormally);
+      expect(() => plan(tcp.replaceFirst('stcp', 'sudp')), returnsNormally);
+      const plugin =
+          "[[visitors]]\ntype='xudp'\n[visitors.plugin]\n"
+          "type='socks5_udp'\nbindPort=8080";
+      expect(() => plan(plugin), throwsFormatException);
+      expect(
+        () => plan("[[proxies]]\ntype='tcp'\nlocalPort=8080"),
+        returnsNormally,
+      );
+    },
+  );
+
   test('runtime and filter contexts encode imported IDs identically', () {
     final entries = [
       Socks5Connection(id: 'password=alpha', name: 'First', tcpPorts: [8080]),
@@ -567,6 +591,38 @@ void main() {
       );
     },
   );
+
+  test('ordinary visitor bind reservations work for hostnames and IPs', () {
+    final source = visitor('socks');
+    final ordinary = visitor('ordinary', id: 2, socks5: null);
+    for (final manual in [false, true]) {
+      Socks5RuntimePlan plan(String address, int port, {String type = 'stcp'}) {
+        final config = ordinary.copyWith(
+          protocol: type,
+          bindAddr: address,
+          bindPort: port,
+          manualToml: manual
+              ? "[[visitors]]\ntype='$type'\nbindAddr='$address'\nbindPort=$port"
+              : null,
+        );
+        return Socks5RuntimePlan.build([source, config]);
+      }
+
+      expect(() => plan('device.local', 8081), returnsNormally);
+      expect(() => plan('device.local', 8080, type: 'sudp'), returnsNormally);
+      for (final address in ['device.local', '127.0.0.1', '::']) {
+        expect(() => plan(address, 8080), throwsFormatException);
+      }
+      for (final address in ['127.0.0.2', '::1']) {
+        expect(() => plan(address, 8080), returnsNormally);
+      }
+    }
+    expect(
+      () =>
+          Socks5RuntimePlan.build([source.copyWith(bindAddr: 'device.local')]),
+      throwsFormatException,
+    );
+  });
 
   test('internal allocation avoids raw visitor and business TCP ports', () {
     final source = visitor('socks', bindPort: 8080);

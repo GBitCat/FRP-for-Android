@@ -1,0 +1,158 @@
+--- a/client/visitor/stcp.go
++++ b/client/visitor/stcp.go
+@@ -21,6 +21,7 @@
+ 	libio "github.com/fatedier/golib/io"
+ 
+ 	v1 "github.com/fatedier/frp/pkg/config/v1"
++	"github.com/fatedier/frp/pkg/util/androidlocal"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+ )
+ 
+@@ -36,7 +37,7 @@
+ 		if err != nil {
+ 			return
+ 		}
+-		go sv.acceptLoop(sv.l, "stcp local", sv.handleConn)
++		go sv.acceptLoop(sv.l, "stcp local", androidlocal.StreamHandler(sv.cfg.Name, sv.handleConn))
+ 	}
+ 
+ 	go sv.acceptLoop(sv.internalLn, "stcp internal", sv.handleConn)
+--- a/client/visitor/xtcp.go
++++ b/client/visitor/xtcp.go
+@@ -34,6 +34,7 @@
+ 	"github.com/fatedier/frp/pkg/naming"
+ 	"github.com/fatedier/frp/pkg/nathole"
+ 	"github.com/fatedier/frp/pkg/transport"
++	"github.com/fatedier/frp/pkg/util/androidlocal"
+ 	netpkg "github.com/fatedier/frp/pkg/util/net"
+ 	"github.com/fatedier/frp/pkg/util/util"
+ 	"github.com/fatedier/frp/pkg/util/xlog"
+@@ -65,7 +66,7 @@
+ 		if err != nil {
+ 			return
+ 		}
+-		go sv.acceptLoop(sv.l, "xtcp local", sv.handleConn)
++		go sv.acceptLoop(sv.l, "xtcp local", androidlocal.StreamHandler(sv.cfg.Name, sv.handleConn))
+ 	}
+ 
+ 	go sv.acceptLoop(sv.internalLn, "xtcp internal", sv.handleConn)
+--- a/pkg/plugin/visitor/socks5_udp_datagram.go
++++ b/pkg/plugin/visitor/socks5_udp_datagram.go
+@@ -17,6 +17,7 @@
+ 	"time"
+ 
+ 	"github.com/fatedier/frp/pkg/plugin/socks5udp"
++	"github.com/fatedier/frp/pkg/util/androidlocal"
+ )
+ 
+ func (p *Socks5UDPPlugin) startDatagramClient(client net.Conn) {
+@@ -44,6 +45,9 @@
+ }
+ 
+ func (p *Socks5UDPPlugin) handleDatagram(client net.Conn) {
++	if !androidlocal.Admit(client, p.pluginCtx.Name, uint16(p.packetSize-socks5udp.SessionDatagramOverhead)) {
++		return
++	}
+ 	ctx, cancel := context.WithCancel(p.ctx)
+ 	defer cancel()
+ 	stopClient := context.AfterFunc(ctx, func() { _ = client.Close() })
+--- /dev/null
++++ b/pkg/util/androidlocal/endpoint.go
+@@ -0,0 +1,97 @@
++// Package androidlocal authenticates the Android app and its embedded frpc on
++// app-managed loopback sockets before either side processes SOCKS traffic.
++package androidlocal
++
++import (
++	"crypto/hmac"
++	"crypto/rand"
++	"crypto/sha256"
++	"encoding/binary"
++	"io"
++	"net"
++	"os"
++	"strconv"
++	"strings"
++	"time"
++)
++
++var key []byte
++var ports = map[int]bool{}
++
++func init() {
++	raw := os.Getenv("FRPC_ANDROID_ENDPOINT_PORTS")
++	os.Unsetenv("FRPC_ANDROID_ENDPOINT_PORTS")
++	for field := range strings.SplitSeq(raw, ",") {
++		if port, err := strconv.Atoi(field); err == nil && port > 0 && port <= 65535 {
++			ports[port] = true
++		}
++	}
++	if len(ports) > 0 {
++		// Configuration templates snapshot the process environment. Deliver
++		// secret material only on the private pipe inherited from the parent.
++		var secret [32]byte
++		if _, err := io.ReadFull(os.Stdin, secret[:]); err == nil {
++			key = secret[:]
++		}
++	}
++}
++
++// Admit runs in a per-connection handler. The original stream is passed on
++// unchanged after the proof, preserving half-close and fallback semantics.
++// frameLimit is the maximum SOCKS UDP frame accepted locally (zero for TCP).
++func Admit(conn net.Conn, name string, frameLimit uint16) bool {
++	local, ok := conn.LocalAddr().(*net.TCPAddr)
++	if !ok || !ports[local.Port] {
++		return true
++	}
++	peer, ok := conn.RemoteAddr().(*net.TCPAddr)
++	if !ok || !local.IP.IsLoopback() || !peer.IP.IsLoopback() || len(key) != 32 {
++		return false
++	}
++	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
++		return false
++	}
++	var clientNonce, serverNonce, clientProof [32]byte
++	if _, err := io.ReadFull(conn, clientNonce[:]); err != nil {
++		return false
++	}
++	if _, err := rand.Read(serverNonce[:]); err != nil {
++		return false
++	}
++	var fields [6]byte
++	binary.BigEndian.PutUint16(fields[0:2], uint16(peer.Port))
++	binary.BigEndian.PutUint16(fields[2:4], uint16(local.Port))
++	binary.BigEndian.PutUint16(fields[4:6], frameLimit)
++	proof := func(role string) []byte {
++		mac := hmac.New(sha256.New, key)
++		mac.Write([]byte(role))
++		mac.Write(fields[:])
++		mac.Write(clientNonce[:])
++		mac.Write(serverNonce[:])
++		mac.Write([]byte(name))
++		return mac.Sum(nil)
++	}
++	var response [66]byte
++	copy(response[0:2], fields[4:6])
++	copy(response[2:34], serverNonce[:])
++	copy(response[34:66], proof("frpc-android-endpoint-v1/server"))
++	if _, err := conn.Write(response[:]); err != nil {
++		return false
++	}
++	if _, err := io.ReadFull(conn, clientProof[:]); err != nil ||
++		!hmac.Equal(clientProof[:], proof("frpc-android-endpoint-v1/client")) {
++		return false
++	}
++	return conn.SetDeadline(time.Time{}) == nil
++}
++
++// Kicked off by BaseVisitor.acceptLoop after accept, never on the accept thread.
++func StreamHandler(name string, handle func(net.Conn)) func(net.Conn) {
++	return func(conn net.Conn) {
++		if !Admit(conn, name, 0) {
++			conn.Close()
++			return
++		}
++		handle(conn)
++	}
++}

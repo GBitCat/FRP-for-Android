@@ -4,6 +4,7 @@ import 'dart:io';
 import '../models/frp_config.dart';
 import '../models/socks5_config.dart';
 import 'socks5_log_entry.dart';
+import 'manual_frp_config.dart';
 
 /// The local SOCKS protocol endpoint owned by frpc, distinct from the public
 /// fixed business ports owned by Android's foreground service.
@@ -25,11 +26,13 @@ class Socks5RuntimePlan {
   final List<Map<String, dynamic>> forwards;
   final Map<String, Socks5VisitorEndpoint> _endpoints;
   final Set<String> _suppressedConfigs;
+  final bool needsStun;
 
   const Socks5RuntimePlan._(
     this.forwards,
     this._endpoints,
     this._suppressedConfigs,
+    this.needsStun,
   );
 
   static const maxListeners = 256;
@@ -40,7 +43,13 @@ class Socks5RuntimePlan {
   static const maxRuntimePayloadBytes = 384 * 1024;
 
   void requirePayloadFits(String configContent) {
-    if (forwards.isEmpty) return;
+    if (forwards.isEmpty) {
+      // Raw TOML uses the core service's separate 512 KiB configuration limit.
+      if (utf8.encode(configContent).length > 512 * 1024) {
+        throw const FormatException('FRP configuration exceeds 512 KiB');
+      }
+      return;
+    }
     final payload = jsonEncode({
       'androidRuntimeVersion': 1,
       'configContent': configContent,
@@ -92,7 +101,23 @@ class Socks5RuntimePlan {
   factory Socks5RuntimePlan.build(List<FrpConfig> configs) {
     final supported = supportedVisitors(configs);
     final sources = <FrpConfig>[];
+    final manualBlocks = <FrpConfig, List<ManualFrpBlock>>{};
+    var needsStun = false;
     for (final config in configs.where((config) => config.enabled)) {
+      final manual = config.manualToml;
+      if (manual != null && manual.trim().isNotEmpty) {
+        final blocks = manualFrpBlocks(manual);
+        manualBlocks[config] = blocks;
+        needsStun =
+            needsStun ||
+            blocks.any(
+              (block) =>
+                  block.values['enabled'] != false &&
+                  _needsStun(block.values['type']),
+            );
+      } else if (_needsStun(config.protocol)) {
+        needsStun = true;
+      }
       final settings = config.socks5;
       if (settings == null) continue;
       final error = settings.validationError();
@@ -114,7 +139,9 @@ class Socks5RuntimePlan {
         sources.add(config);
       }
     }
-    if (sources.isEmpty) return const Socks5RuntimePlan._([], {}, {});
+    if (sources.isEmpty) {
+      return Socks5RuntimePlan._(const [], const {}, const {}, needsStun);
+    }
 
     final autonomousXudp = sources
         .where((config) => config.protocol == 'xudp')
@@ -146,16 +173,26 @@ class Socks5RuntimePlan {
     for (final config in configs.where((config) => config.enabled)) {
       if (sources.contains(config)) continue;
       if (suppressed.contains(_configKey(config, config.name))) continue;
-      if (config.manualToml?.trim().isNotEmpty ?? false) {
-        // Reserve conventional manual bindPort declarations as well. Exact
-        // address/protocol validation of arbitrary TOML remains frpc's job.
-        for (final match in RegExp(
-          r'^\s*(?:bindPort|plugin\.bindPort)\s*=\s*(\d+)\s*(?:#.*)?$',
-          multiLine: true,
-        ).allMatches(config.manualToml!)) {
-          final port = int.tryParse(match.group(1)!);
-          if (port != null && port > 0 && port <= 65535) {
-            reservedTcpPorts.add(port);
+      final blocks = manualBlocks[config];
+      if (blocks != null) {
+        for (final block in blocks) {
+          if (block.section != 'visitors' || block.values['enabled'] == false) {
+            continue;
+          }
+          final fields = block.values;
+          final datagram = fields['type'] == 'sudp' || fields['type'] == 'xudp';
+          final plugin = fields['plugin'];
+          final socksPlugin = plugin is Map && plugin['type'] == 'socks5_udp';
+          final sockets = [
+            // An autonomous SOCKS UDP plugin replaces the visitor's ordinary
+            // UDP bind with an ephemeral socket and exposes a TCP control port.
+            if (!(datagram && socksPlugin))
+              _SocketBinding.fromToml(datagram ? 'udp' : 'tcp', fields),
+            if (socksPlugin) _SocketBinding.fromToml('tcp', plugin),
+          ].nonNulls;
+          for (final socket in sockets) {
+            ordinarySockets.add(socket);
+            if (socket.protocol == 'tcp') reservedTcpPorts.add(socket.port);
           }
         }
         continue;
@@ -165,9 +202,9 @@ class Socks5RuntimePlan {
           config.bindPort > 0) {
         final protocol = _isUdp(config) ? 'udp' : 'tcp';
         ordinarySockets.add(
-          _SocketBinding(
+          _SocketBinding.reserveVisitor(
             protocol,
-            _bindAddress(config.bindAddr),
+            config.bindAddr,
             config.bindPort,
           ),
         );
@@ -292,8 +329,12 @@ class Socks5RuntimePlan {
       ]),
       Map<String, Socks5VisitorEndpoint>.unmodifiable(endpoints),
       Set<String>.unmodifiable(suppressed),
+      needsStun,
     );
   }
+
+  static bool _needsStun(Object? protocol) =>
+      protocol == 'xtcp' || protocol == 'xudp';
 
   static bool _isUdp(FrpConfig config) =>
       config.protocol == 'sudp' || config.protocol == 'xudp';
@@ -316,6 +357,33 @@ class _SocketBinding {
   final int port;
 
   const _SocketBinding(this.protocol, this.address, this.port);
+
+  factory _SocketBinding.reserveVisitor(
+    String protocol,
+    String address,
+    int port,
+  ) {
+    if (address.isEmpty || address == 'localhost') {
+      return _SocketBinding(protocol, '127.0.0.1', port);
+    }
+    // FRP resolves ordinary visitor hostnames at start. Until then, reserve
+    // this protocol and port across all addresses.
+    return _SocketBinding(
+      protocol,
+      InternetAddress.tryParse(address)?.address ?? '::',
+      port,
+    );
+  }
+
+  static _SocketBinding? fromToml(String protocol, Map fields) {
+    final port = fields['bindPort'];
+    if (port is! int || port <= 0 || port > 65535) return null;
+    final address = fields['bindAddr'] ?? '';
+    if (address is! String) {
+      throw const FormatException('Invalid manual visitor bind address');
+    }
+    return _SocketBinding.reserveVisitor(protocol, address, port);
+  }
 
   bool overlaps(_SocketBinding other) {
     if (protocol != other.protocol || port != other.port) return false;

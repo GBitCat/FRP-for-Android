@@ -111,7 +111,7 @@ hidden-key-line-one
 hidden-key-line-two
 """
 password = '''
-        "'''hidden-literal-password\nsecond-line'''"
+        "'''hidden-literal-password\nsecond-line'''\n"
         '''
 headers = { Authorization = "hidden-inline-authorization", normal = "hidden-with-table" }
 auth.token = "hidden-token" # hidden-comment
@@ -140,6 +140,20 @@ port = 1234
       );
     },
   );
+
+  test('details mask header arrays and group keys in both TOML forms', () {
+    for (final headers in [
+      '[[proxies.healthCheck.httpHeaders]]\nvalue = "private-value"\nname = "Authorization"',
+      'healthCheck.httpHeaders = [{name = "Cookie", value = "private-value"}]',
+    ]) {
+      final result = redactConfigurationToml(
+        '[[proxies]]\nname = "public"\nloadBalancer.groupKey = "private-group"\n$headers',
+      );
+      expect(result, contains('name = "public"'));
+      expect(result, contains('loadBalancer.groupKey = "***"'));
+      expect(result, isNot(contains('private-')));
+    }
+  });
 
   testWidgets(
     'details stay within sixty percent with fixed actions and masked secrets',

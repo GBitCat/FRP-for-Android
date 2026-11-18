@@ -1,0 +1,168 @@
+name: Run Android instrumentation
+description: Boot the specified Google APIs x86_64 image and run the integration suite
+inputs:
+  platform:
+    description: Android SDK package suffix (for example 37.0)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Create test AVD
+      shell: bash
+      env:
+        ANDROID_PLATFORM: ${{ inputs.platform }}
+      run: |
+        set -Eeuo pipefail
+        sdkmanager="$ANDROID_HOME/cmdline-tools/22.0/bin/sdkmanager"
+        avdmanager="$ANDROID_HOME/cmdline-tools/22.0/bin/avdmanager"
+        export ANDROID_AVD_HOME="$RUNNER_TEMP/frp-avd"
+        mkdir -p "$ANDROID_AVD_HOME"
+        avd_name="frp-ci-api${ANDROID_PLATFORM}"
+        system_image="system-images;android-${ANDROID_PLATFORM};google_apis;x86_64"
+        "$sdkmanager" --install \
+          "emulator" \
+          "platform-tools" \
+          "platforms;android-${ANDROID_PLATFORM}" \
+          "$system_image"
+        printf 'no\n' | "$avdmanager" create avd \
+          --force \
+          --name "$avd_name" \
+          --package "$system_image" \
+          --device pixel_5
+        grep -Fxq "target=android-${ANDROID_PLATFORM}" "$ANDROID_AVD_HOME/$avd_name.ini"
+        "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx "$avd_name"
+
+    - name: Boot emulator and run integration tests
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        ANDROID_PLATFORM: ${{ inputs.platform }}
+        ANDROID_SERIAL: emulator-5554
+      run: |
+        set -Eeuo pipefail
+        adb="$ANDROID_HOME/platform-tools/adb"
+        avd_name="frp-ci-api${ANDROID_PLATFORM}"
+        export ANDROID_AVD_HOME="$RUNNER_TEMP/frp-avd"
+        test -f "$ANDROID_AVD_HOME/$avd_name.ini"
+        if [[ -e /dev/kvm ]]; then
+          sudo chmod 0666 /dev/kvm
+        fi
+
+        "$adb" start-server
+        emulator_log="$RUNNER_TEMP/${avd_name}-emulator.log"
+        "$ANDROID_HOME/emulator/emulator" \
+          -avd "$avd_name" \
+          -port 5554 \
+          -no-snapshot-load \
+          -no-snapshot-save \
+          -no-window \
+          -gpu software \
+          -noaudio \
+          -no-boot-anim \
+          -camera-back none \
+          -camera-front none \
+          >"$emulator_log" 2>&1 &
+        emulator_pid=$!
+
+        cleanup() {
+          rc=$?
+          trap - EXIT
+          set +e
+          if (( rc != 0 )); then
+            tail -n 200 "$emulator_log" || true
+          fi
+
+          # ADB or the emulator can occasionally stop responding after a
+          # successful instrumentation run. Keep teardown bounded so a
+          # cleanup hang cannot turn passing tests into a step timeout.
+          timeout --signal=TERM --kill-after=2s 8s \
+            "$adb" -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
+          kill "$emulator_pid" >/dev/null 2>&1 || true
+          for _ in $(seq 1 50); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          if kill -0 "$emulator_pid" 2>/dev/null; then
+            kill -KILL "$emulator_pid" >/dev/null 2>&1 || true
+          fi
+          wait "$emulator_pid" 2>/dev/null || true
+          exit "$rc"
+        }
+        trap cleanup EXIT
+
+        device_connected=false
+        for _ in $(seq 1 60); do
+          device_state="$("$adb" -s "$ANDROID_SERIAL" get-state 2>/dev/null || true)"
+          if [[ "$device_state" == "device" ]]; then
+            device_connected=true
+            break
+          fi
+          if ! kill -0 "$emulator_pid" 2>/dev/null; then
+            printf '%s\n' 'Android emulator exited before connecting to adb.' >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        if [[ "$device_connected" != true ]]; then
+          printf '%s\n' 'Timed out waiting for the Android emulator to connect to adb.' >&2
+          exit 1
+        fi
+
+        boot_completed=false
+        for _ in $(seq 1 120); do
+          if [[ "$("$adb" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+            boot_completed=true
+            break
+          fi
+          if ! kill -0 "$emulator_pid" 2>/dev/null; then
+            printf '%s\n' 'Android emulator exited before completing boot.' >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        if [[ "$boot_completed" != true ]]; then
+          printf '%s\n' 'Timed out waiting for the Android emulator to boot.' >&2
+          exit 1
+        fi
+
+        actual_api="$("$adb" -s "$ANDROID_SERIAL" shell getprop ro.build.version.sdk | tr -d '\r')"
+        test "$actual_api" = "${ANDROID_PLATFORM%%.*}"
+
+        "$adb" -s "$ANDROID_SERIAL" shell settings put global window_animation_scale 0
+        "$adb" -s "$ANDROID_SERIAL" shell settings put global transition_animation_scale 0
+        "$adb" -s "$ANDROID_SERIAL" shell settings put global animator_duration_scale 0
+
+        app_apk="flutter_app/build/app/outputs/apk/debug/app-debug.apk"
+        test_apk="flutter_app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+        test -f "$app_apk"
+        test -f "$test_apk"
+        "$adb" -s "$ANDROID_SERIAL" install -r -t -g "$app_apk"
+        "$adb" -s "$ANDROID_SERIAL" install -r -t -g "$test_apk"
+
+        instrumentation_log="$RUNNER_TEMP/${avd_name}-instrumentation.txt"
+        set +e
+        "$adb" -s "$ANDROID_SERIAL" shell am instrument -w -r \
+          com.frp.frp_app.debug.test/androidx.test.runner.AndroidJUnitRunner \
+          | tee "$instrumentation_log"
+        instrumentation_rc=${PIPESTATUS[0]}
+        set -e
+        required="com.frp.frp_app.FrpcServiceIntegrationTest#foregroundServiceStartsAndStopsOnAndroid15AndLater"
+        required+=" com.frp.frp_app.Socks5ForwarderIntegrationTest#persistentTcpConnectionCompletesTwoRoundTripsWithoutHalfClose"
+        if (( instrumentation_rc != 0 )) || \
+            ! awk -v required="$required" -f scripts/check_instrumentation.awk "$instrumentation_log"; then
+          printf 'Android instrumentation failed with adb status %d.\n' \
+            "$instrumentation_rc" >&2
+          exit 1
+        fi
+
+    - name: Release emulator disk space
+      shell: bash
+      env:
+        ANDROID_PLATFORM: ${{ inputs.platform }}
+        ANDROID_AVD_HOME: ${{ runner.temp }}/frp-avd
+      run: |
+        set -Eeuo pipefail
+        "$ANDROID_HOME/cmdline-tools/22.0/bin/avdmanager" delete avd --name "frp-ci-api${ANDROID_PLATFORM}"
+        "$ANDROID_HOME/cmdline-tools/22.0/bin/sdkmanager" --uninstall "system-images;android-${ANDROID_PLATFORM};google_apis;x86_64"
