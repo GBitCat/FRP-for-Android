@@ -4,7 +4,7 @@ set -Eeuo pipefail
 readonly REQUIRED_GO_VERSION="go1.26.11"
 # Keep frpc on its pinned patched toolchain without changing certificate builds.
 export GOTOOLCHAIN="$REQUIRED_GO_VERSION"
-readonly EXPECTED_FRPC_SHA256="6fa9626dd40dd83b85d3d49d909849ab96caeb0339bcf32835e7523eac2186fe"
+readonly EXPECTED_FRPC_SHA256="b753f3e4e41b0a7a319666eb216808cf912dc969d8dd18c7b42ec7c090e0e292"
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 destination="$repo_dir/flutter_app/android/app/src/main/jniLibs/arm64-v8a/libfrpc.so"

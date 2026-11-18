@@ -71,6 +71,10 @@ object ScreenCapturePolicy {
  */
 class MainActivity : FlutterActivity() {
 
+    private companion object {
+        const val TUNNEL_PERMISSIONS_REQUEST = 1002
+    }
+
     private var channel: MethodChannel? = null
     private var secureChannel: MethodChannel? = null
     private var documentIoBridge: DocumentIoBridge? = null
@@ -81,11 +85,23 @@ class MainActivity : FlutterActivity() {
     }
     private val secureResults = Collections.synchronizedSet(mutableSetOf<MainThreadResult>())
     private var sensitiveClipSequence = 0L
+    private var tunnelPermissionsRequested = false
+    private var tunnelPermissionResults: MutableList<MethodChannel.Result>? = null
+    private var legacyAssetCheckQueued = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (ScreenCapturePolicy.shouldProtect(applicationInfo.flags)) {
             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    override fun onFlutterUiDisplayed() {
+        super.onFlutterUiDisplayed()
+        if (BuildConfig.BUILD_TYPE == "release" && !legacyAssetCheckQueued && !secureExecutor.isShutdown) {
+            legacyAssetCheckQueued = true
+            val app = applicationContext
+            secureExecutor.execute { LegacyFlutterAssets.cleanAfterUpdate(app) }
         }
     }
 
@@ -100,22 +116,23 @@ class MainActivity : FlutterActivity() {
         ).also { ch ->
             ch.setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "requestTunnelPermissions" -> requestTunnelPermissions(result)
                     "start" -> {
                         val configContent = call.argument<String>("configContent")
                         val forwards = (call.arguments as? Map<*, *>)?.get("socks5Forwards")
-                        result.success(if (forwards == null || forwards is List<*>) {
-                            FrpcService.start(this, configContent, forwards as? List<*> ?: emptyList<Any>())
-                        } else false)
+                        if (forwards == null || forwards is List<*>) {
+                            FrpcService.submitRunCommand(this, result) { app ->
+                                FrpcService.start(app, configContent, forwards as? List<*> ?: emptyList<Any>())
+                            }
+                        } else result.success(false)
                     }
                     "probeStun" -> {
                         val endpoint = (call.arguments as? Map<*, *>)?.get("endpoint") as? String
                         stunProbeBridge?.probe(endpoint, result)
                             ?: result.success(StunProbeResult("error", detail = "STUN probe is unavailable").toMap())
                     }
-                    "stop" -> {
-                        result.success(FrpcService.stop(this))
-                    }
-                    "isRunRequested" -> result.success(FrpcService.isRunRequested(this))
+                    "stop" -> FrpcService.submitRunCommand(this, result, FrpcService::stop)
+                    "isRunRequested" -> FrpcService.submitRunCommand(this, result, FrpcService::isRunRequested)
                     "getInitialTab" -> result.success(intent?.getIntExtra("initial_tab", -1) ?: -1)
                     "getTlsStorageRoot" -> {
                         try {
@@ -164,6 +181,11 @@ class MainActivity : FlutterActivity() {
                     )
                     "getTotalMemoryMb" -> result.success(getTotalMemoryMb())
                     "readLogs" -> result.success(FrpcService.readRecentLogs())
+                    "readLogSnapshot" -> result.success(FrpcService.readLogSnapshot())
+                    "setLogSubscription" -> {
+                        FrpcService.setLogSubscription(ch, call.arguments == true)
+                        result.success(null)
+                    }
                     "requestIgnoreBatteryOptimizations" -> {
                         requestIgnoreBatteryOptimizations()
                         result.success(null)
@@ -216,11 +238,14 @@ class MainActivity : FlutterActivity() {
     override fun onStart() {
         super.onStart()
         FrpcService.channel = channel
+        FrpcService.setLogUiStarted(channel, true)
         FrpcService.instance?.syncToChannel()
         // 健康检查后按需启动：服务/frpc 正常时不重复 start（避免回 App 时重启 frpc 断连）
-        FrpcService.ensureRunning(this)
-        // Android 13+：请求通知权限（前台服务通知需要）
-        if (Build.VERSION.SDK_INT >= 33 &&
+        if (Build.VERSION.SDK_INT >= 37 && FrpcService.isRunRequested(this)) {
+            requestTunnelPermissions()
+        }
+        if (tunnelPermissionResults == null) FrpcService.ensureRunning(this)
+        if (Build.VERSION.SDK_INT in 33..36 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
@@ -228,9 +253,61 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // On Android 17 a tunnel may accept LAN clients or negotiate a LAN peer
+    // even when its configured server is public. Ask before the first probe.
+    private fun requestTunnelPermissions(result: MethodChannel.Result? = null) {
+        tunnelPermissionResults?.let { pending ->
+            if (result != null) pending.add(result)
+            return
+        }
+        if (Build.VERSION.SDK_INT < 37 || tunnelPermissionsRequested) {
+            result?.success(null)
+            return
+        }
+        val missing = listOf(
+            Manifest.permission.ACCESS_LOCAL_NETWORK,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ).filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isEmpty()) {
+            result?.success(null)
+            return
+        }
+        tunnelPermissionsRequested = true
+        tunnelPermissionResults = listOfNotNull(result).toMutableList()
+        requestPermissions(missing.toTypedArray(), TUNNEL_PERMISSIONS_REQUEST)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != TUNNEL_PERMISSIONS_REQUEST) return
+        if (Build.VERSION.SDK_INT >= 37 &&
+            checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
+        ) {
+            FrpcService.recordLog("Local network access is off. Allow Nearby devices in Android app settings to use LAN peers.")
+        }
+        val pending = tunnelPermissionResults
+        tunnelPermissionResults = null
+        // Public and loopback connections can still work after a denial.
+        pending?.forEach { it.success(null) }
+        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+            FrpcService.ensureRunning(this)
+        }
+    }
+
+    override fun onStop() {
+        FrpcService.setLogUiStarted(channel, false)
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        tunnelPermissionResults?.forEach {
+            it.error("ACTIVITY_CLOSED", "Activity closed during the permission request", null)
+        }
+        tunnelPermissionResults = null
         // 不停 frpc：进程由 FrpcService 托管，Activity 销毁不影响后台连接
-        FrpcService.channel = null
+        if (FrpcService.channel === channel) FrpcService.channel = null
         stunProbeBridge?.close()
         stunProbeBridge = null
         secureChannel?.setMethodCallHandler(null)

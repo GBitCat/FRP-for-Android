@@ -159,15 +159,22 @@ void _writeTransport(StringBuffer b, FrpConfig config, String table) {
   b.writeln('useCompression = ${config.useCompression}');
 }
 
+const defaultStunServer = 'stun.easyvoip.com:3478';
+
 /// 全局服务器连接配置段
-String globalBlock(ServerConfig server) {
+String globalBlock(
+  ServerConfig server, {
+  String? stunServer = defaultStunServer,
+}) {
   final b = StringBuffer();
   b.writeln('serverAddr = "${_tomlString(server.serverAddr)}"');
   b.writeln('serverPort = ${server.serverPort}');
   if (server.token.isNotEmpty) {
     b.writeln('auth.token = "${_tomlString(server.token)}"');
   }
-  b.writeln('natHoleStunServer = "stun.easyvoip.com:3478"');
+  if (stunServer != null) {
+    b.writeln('natHoleStunServer = ${quotedTomlString(stunServer)}');
+  }
   b.writeln();
   b.writeln('transport.protocol = "${_tomlString(server.protocol)}"');
   b.writeln('transport.wireProtocol = "${_tomlString(server.wireProtocol)}"');
@@ -202,7 +209,9 @@ String generateToml(
 ) {
   final b = StringBuffer();
   final plan = Socks5RuntimePlan.build([?linkedConfig, config]);
-  b.write(globalBlock(server));
+  b.write(
+    globalBlock(server, stunServer: plan.needsStun ? defaultStunServer : null),
+  );
   if (linkedConfig != null && plan.emitsConfig(linkedConfig)) {
     b.writeln('# Fallback ${linkedConfig.protocol.toUpperCase()} visitor');
     b.write(configBlock(linkedConfig, socks5Plan: plan));
@@ -220,11 +229,12 @@ String generateServerPreview(
   ServerConfig server,
   List<FrpConfig> appConfigs, {
   Socks5RuntimePlan? socks5Plan,
+  String? stunServer = defaultStunServer,
 }) {
   final b = StringBuffer();
   final plan = socks5Plan ?? Socks5RuntimePlan.build(appConfigs);
   final emitted = appConfigs.where(plan.emitsConfig).toList(growable: false);
-  b.write(globalBlock(server));
+  b.write(globalBlock(server, stunServer: plan.needsStun ? stunServer : null));
   for (var i = 0; i < emitted.length; i++) {
     if (i > 0) b.writeln();
     final block = configBlock(emitted[i], socks5Plan: plan).trimRight();

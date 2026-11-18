@@ -1,33 +1,37 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/frp_config.dart';
+import '../services/frp_engine.dart' show RuntimeLog;
 import '../services/log_file_export.dart';
 import '../services/secure_clipboard.dart';
 import '../services/socks5_log_entry.dart';
 import '../state/app_state.dart';
 import '../widgets/app_form_style.dart';
 
+export '../services/frp_engine.dart' show RuntimeLog;
+
 /// The native service owns the full history; the stream only contains new lines.
 abstract interface class LogsSource {
-  Stream<String> get logStream;
-  List<String> get logs;
-  Future<String> readLogs();
+  Stream<RuntimeLog> get logStream;
+  List<RuntimeLog> get logs;
+  Future<List<RuntimeLog>> readLogs();
 }
 
 class _EngineLogsSource implements LogsSource {
   const _EngineLogsSource();
 
   @override
-  Stream<String> get logStream => appState.engine.logStream;
+  Stream<RuntimeLog> get logStream => appState.engine.logStream;
 
   @override
-  List<String> get logs => appState.engine.logs;
+  List<RuntimeLog> get logs => appState.engine.logs;
 
   @override
-  Future<String> readLogs() => appState.engine.readLogs();
+  Future<List<RuntimeLog>> readLogs() => appState.engine.readLogSnapshot();
 }
 
 enum _LogCategory {
@@ -51,11 +55,14 @@ class LogsScreen extends StatefulWidget {
     this.source,
     this.configurations,
     this.saveLogs,
+    this.anchorLatestLog = kReleaseMode,
   });
 
   final LogsSource? source;
   final ValueListenable<List<FrpConfig>>? configurations;
   final LogsFileSaver? saveLogs;
+  @visibleForTesting
+  final bool anchorLatestLog;
 
   @override
   State<LogsScreen> createState() => _LogsScreenState();
@@ -75,19 +82,26 @@ class _LogsScreenState extends State<LogsScreen> {
   final _filterController = TextEditingController();
   late final LogsSource _source;
   late Listenable _configurationChanges;
-  StreamSubscription<String>? _sub;
-  List<String> _logs = [];
-  List<_LogLine> _entries = [];
+  StreamSubscription<RuntimeLog>? _sub;
+  final _entries = ListQueue<_LogLine>();
+  final _visible = ListQueue<_LogLine>();
+  final _pending = ListQueue<RuntimeLog>();
+  final _owners = <(String, String), ({Socks5LogContext context, int count})>{};
+  int? _frameCallback;
+  Timer? _displayCooldown;
   Map<String, _SocksLogConfiguration> _configurations = {};
   String? _configurationKey;
   String? _connectionId;
-  final List<String> _initialLiveLogs = [];
   bool _loadingInitial = true;
   bool _scrollScheduled = false;
   String _filter = '';
   _LogCategory _category = _LogCategory.all;
   bool _autoScroll = true;
   bool _savingLogs = false;
+  // When following is paused, older and newer rows grow on opposite sides
+  // of this ID. New arrivals leave the reader's pixel position intact.
+  int? _pausedAtId;
+  double _tailAnchor = 1;
 
   @override
   void initState() {
@@ -95,8 +109,9 @@ class _LogsScreenState extends State<LogsScreen> {
     _source = widget.source ?? const _EngineLogsSource();
     _configurationChanges = widget.configurations ?? appState;
     _configurationChanges.addListener(_onConfigurationsChanged);
-    _logs = _trimHistory(_source.logs);
-    _entries = _logs.map(_LogLine.new).toList();
+    for (final row in _source.logs) {
+      _append(_LogLine(row));
+    }
     _refreshConfigurations();
     _sub = _source.logStream.listen(_onLog);
     _loadInitial();
@@ -160,10 +175,10 @@ class _LogsScreenState extends State<LogsScreen> {
         );
       }
     }
-    for (final line in _entries) {
-      final context = line.socks5?.context;
-      if (context != null) add(context);
+    for (final owner in _owners.values) {
+      add(owner.context);
     }
+    final oldFilters = (_configurationKey, _connectionId);
     _configurations = options;
     if (!options.containsKey(_configurationKey)) {
       _configurationKey = null;
@@ -173,58 +188,117 @@ class _LogsScreenState extends State<LogsScreen> {
     )) {
       _connectionId = null;
     }
+    if (oldFilters != (_configurationKey, _connectionId)) _refilter();
   }
 
-  List<String> _trimHistory(List<String> lines) => lines.length > _historyLimit
-      ? lines.sublist(lines.length - _historyLimit)
-      : List.of(lines);
-
-  void _onLog(String line) {
-    if (!mounted || line.isEmpty) return;
-    if (_loadingInitial) {
-      _initialLiveLogs.add(line);
-      if (_initialLiveLogs.length > _historyLimit) _initialLiveLogs.removeAt(0);
+  bool _updateOwner(_LogLine row, int delta) {
+    final context = row.socks5?.context;
+    if (context == null) return false;
+    final key = (context.configKey, context.connectionId);
+    final old = _owners[key];
+    final count = (old?.count ?? 0) + delta;
+    if (count == 0) {
+      _owners.remove(key);
+      return true;
     }
-    setState(() {
-      _logs = _trimHistory([..._logs, line]);
-      _entries = [..._entries, _LogLine(line)];
-      if (_entries.length > _historyLimit) _entries.removeAt(0);
-      _refreshConfigurations();
+    final current = delta > 0 ? context : old!.context;
+    _owners[key] = (context: current, count: count);
+    return old == null ||
+        current.configName != old.context.configName ||
+        current.connectionName != old.context.connectionName;
+  }
+
+  bool _append(_LogLine row) {
+    // Native callback order is serialized under the same lock as its snapshot.
+    if (row.raw.isEmpty ||
+        (_entries.isNotEmpty && row.record.id <= _entries.last.record.id)) {
+      return false;
+    }
+    _entries.addLast(row);
+    var changed = _updateOwner(row, 1);
+    if (_matches(row)) _visible.addLast(row);
+    if (_entries.length > _historyLimit) {
+      final expired = _entries.removeFirst();
+      changed = _updateOwner(expired, -1) || changed;
+      if (_visible.isNotEmpty && identical(_visible.first, expired)) {
+        _visible.removeFirst();
+      }
+    }
+    return changed;
+  }
+
+  void _onLog(RuntimeLog row) {
+    if (!mounted) return;
+    _pending.addLast(row);
+    if (_pending.length > _historyLimit) _pending.removeFirst();
+    if (kReleaseMode && widget.source == null && _loadingInitial) return;
+    if (_displayCooldown == null) _scheduleRefresh();
+  }
+
+  void _scheduleRefresh() {
+    _frameCallback ??= WidgetsBinding.instance.scheduleFrameCallback((_) {
+      _frameCallback = null;
+      if (!mounted || _pending.isEmpty) return;
+      _flushPending();
+      _scrollToBottom();
+      // Low-rate events appear on the next frame. During sustained traffic,
+      // cap visible updates at five per second, regardless of the log rate.
+      _displayCooldown = Timer(const Duration(milliseconds: 200), () {
+        _displayCooldown = null;
+        if (mounted && _pending.isNotEmpty) _scheduleRefresh();
+      });
     });
-    _scrollToBottom();
+  }
+
+  void _flushPending() {
+    if (_pending.isEmpty) return;
+    setState(() {
+      var changed = false;
+      while (_pending.isNotEmpty) {
+        changed = _append(_LogLine(_pending.removeFirst())) || changed;
+      }
+      if (changed) _refreshConfigurations();
+    });
   }
 
   Future<void> _loadInitial() async {
-    String all;
+    List<RuntimeLog> history;
     try {
-      all = await _source.readLogs();
+      history = await _source.readLogs();
     } catch (_) {
-      all = '';
+      history = const [];
     }
     if (!mounted) return;
-    final history = all.split('\n').where((e) => e.isNotEmpty).toList();
     setState(() {
-      if (history.isNotEmpty) {
-        // The native snapshot can already include the first stream events.
-        // Match its tail to the buffered events before appending newer lines.
-        var overlap = history.length < _initialLiveLogs.length
-            ? history.length
-            : _initialLiveLogs.length;
-        for (; overlap > 0; overlap--) {
-          var matches = true;
-          for (var i = 0; i < overlap; i++) {
-            if (history[history.length - overlap + i] != _initialLiveLogs[i]) {
-              matches = false;
-              break;
-            }
-          }
-          if (matches) break;
+      if (kReleaseMode && widget.source == null) {
+        // Subscribing precedes the Android snapshot on the same FIFO channel.
+        // A batch delivered during the read can overlap the end of the snapshot.
+        for (final row in history) {
+          _append(_LogLine(row));
         }
-        _logs = _trimHistory([...history, ..._initialLiveLogs.skip(overlap)]);
+        final lastSnapshotId = history.lastOrNull?.id ?? 0;
+        for (final row in _pending) {
+          if (row.id > lastSnapshotId) _append(_LogLine(row));
+        }
+        _pending.clear();
+      } else {
+        final merged = <int, _LogLine>{
+          for (final row in history) row.id: _LogLine(row),
+          for (final row in _entries) row.record.id: row,
+          for (final row in _pending) row.id: _LogLine(row),
+        };
+        _pending.clear();
+        _entries.clear();
+        _visible.clear();
+        _owners.clear();
+        final ids = merged.keys.toList()..sort();
+        for (final id in ids.skip(
+          ids.length > _historyLimit ? ids.length - _historyLimit : 0,
+        )) {
+          _append(merged[id]!);
+        }
       }
-      _entries = _logs.map(_LogLine.new).toList();
       _refreshConfigurations();
-      _initialLiveLogs.clear();
       _loadingInitial = false;
     });
     _scrollToBottom();
@@ -237,7 +311,9 @@ class _LogsScreenState extends State<LogsScreen> {
       _scrollScheduled = false;
       if (!mounted || !_autoScroll || !_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (position.pixels != position.maxScrollExtent) {
+      if (widget.anchorLatestLog) {
+        if (position.pixels != 0) position.jumpTo(0);
+      } else if (position.pixels != position.maxScrollExtent) {
         position.jumpTo(position.maxScrollExtent);
         // Lazy, wrapped rows can change the estimated extent after a jump.
         _scrollToBottom();
@@ -246,7 +322,10 @@ class _LogsScreenState extends State<LogsScreen> {
   }
 
   void _setFilter(String value) {
-    setState(() => _filter = value);
+    setState(() {
+      _filter = value;
+      _refilter();
+    });
     _scrollToBottom();
   }
 
@@ -348,7 +427,12 @@ class _LogsScreenState extends State<LogsScreen> {
   }
 
   void _setAutoScroll(bool value) {
-    setState(() => _autoScroll = value);
+    setState(() {
+      _autoScroll = value;
+      if (widget.anchorLatestLog) {
+        _pausedAtId = value ? null : (_entries.lastOrNull?.record.id ?? 0);
+      }
+    });
     if (value) _scrollToBottom();
   }
 
@@ -409,11 +493,14 @@ class _LogsScreenState extends State<LogsScreen> {
         for (final item in _LogCategory.values) (item.name, item.label),
       ],
       onSelected: (value) {
-        setState(() => _category = _LogCategory.values.byName(value));
+        setState(() {
+          _category = _LogCategory.values.byName(value);
+          _refilter();
+        });
         _scrollToBottom();
       },
     );
-    final configuration = _filterMenu(
+    late final configuration = _filterMenu(
       keyName: 'logs_configuration',
       label: 'Configuration',
       value: _configurationKey ?? '',
@@ -426,11 +513,12 @@ class _LogsScreenState extends State<LogsScreen> {
         setState(() {
           _configurationKey = value.isEmpty ? null : value;
           _connectionId = null;
+          _refilter();
         });
         _scrollToBottom();
       },
     );
-    final ports = _filterMenu(
+    late final ports = _filterMenu(
       keyName: 'logs_ports',
       label: 'Ports',
       value: _connectionId ?? '',
@@ -441,7 +529,10 @@ class _LogsScreenState extends State<LogsScreen> {
       ],
       enabled: _configurationKey != null,
       onSelected: (value) {
-        setState(() => _connectionId = value.isEmpty ? null : value);
+        setState(() {
+          _connectionId = value.isEmpty ? null : value;
+          _refilter();
+        });
         _scrollToBottom();
       },
     );
@@ -497,14 +588,19 @@ class _LogsScreenState extends State<LogsScreen> {
   void dispose() {
     _configurationChanges.removeListener(_onConfigurationsChanged);
     _sub?.cancel();
+    _displayCooldown?.cancel();
+    if (_frameCallback case final id?) {
+      WidgetsBinding.instance.cancelFrameCallbackWithId(id);
+    }
     _scrollController.dispose();
     _filterController.dispose();
     super.dispose();
   }
 
   Future<void> _copyAll() async {
+    _flushPending();
     try {
-      await SecureClipboard.copy(_logs.join('\n'));
+      await SecureClipboard.copy(_entries.map((e) => e.raw).join('\n'));
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Logs copied; clipboard clears in 60s')),
@@ -518,30 +614,40 @@ class _LogsScreenState extends State<LogsScreen> {
 
   bool get _hasLogFilter => _category != _LogCategory.all || _filter.isNotEmpty;
 
-  List<_LogLine> _visibleEntries() {
-    final query = _filter.toLowerCase();
-    return _entries.where((line) {
-      if (_category != _LogCategory.all &&
-          _lineCategory(line.raw) != _category) {
+  bool _matches(_LogLine line) {
+    if (_category != _LogCategory.all && _lineCategory(line.raw) != _category) {
+      return false;
+    }
+    if (_category == _LogCategory.socks5 && _configurationKey != null) {
+      final context = line.socks5?.context;
+      if (context?.configKey != _configurationKey) return false;
+      if (_connectionId != null && context?.connectionId != _connectionId) {
         return false;
       }
-      if (_category == _LogCategory.socks5 && _configurationKey != null) {
-        final context = line.socks5?.context;
-        if (context?.configKey != _configurationKey) return false;
-        if (_connectionId != null && context?.connectionId != _connectionId) {
-          return false;
-        }
-      }
-      return query.isEmpty || line.display.toLowerCase().contains(query);
-    }).toList();
+    }
+    return _filter.isEmpty ||
+        line.display.toLowerCase().contains(_filter.toLowerCase());
+  }
+
+  void _refilter() {
+    _visible.clear();
+    _visible.addAll(_entries.where(_matches));
   }
 
   Future<void> _saveLogs() async {
     if (_savingLogs || _loadingInitial) return;
+    final ownership = (_configurationKey, _connectionId);
+    _flushPending();
+    // If the last matching entry expired, avoid broadening an export to all
+    // configurations just because its historical filter disappeared.
+    if (_category == _LogCategory.socks5 &&
+        ownership != (_configurationKey, _connectionId)) {
+      return;
+    }
     // Freeze the same filtered rows the viewer uses before opening the picker.
     // Preserve the raw, already-redacted records and their diagnostic fields.
     final snapshot = List<String>.unmodifiable(
-      _visibleEntries().map((line) => line.raw),
+      _visible.map((line) => line.raw),
     );
     if (snapshot.isEmpty) return;
     final filtered = _hasLogFilter;
@@ -571,7 +677,7 @@ class _LogsScreenState extends State<LogsScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final visible = _visibleEntries();
+    final visible = _visible;
 
     return Scaffold(
       appBar: AppBar(
@@ -592,7 +698,7 @@ class _LogsScreenState extends State<LogsScreen> {
           ),
           IconButton(
             tooltip: 'Copy all',
-            onPressed: _logs.isEmpty ? null : _copyAll,
+            onPressed: _entries.isEmpty ? null : _copyAll,
             icon: const Icon(Icons.copy),
           ),
         ],
@@ -632,33 +738,106 @@ class _LogsScreenState extends State<LogsScreen> {
             child: visible.isEmpty
                 ? Center(
                     child: Text(
-                      _logs.isEmpty ? 'No logs yet' : 'No matching logs',
+                      _entries.isEmpty ? 'No logs yet' : 'No matching logs',
                       style: Theme.of(context).textTheme.bodyMedium
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   )
+                : widget.anchorLatestLog
+                ? _anchoredLogList(scheme)
                 : ListView.builder(
                     key: const ValueKey('logs_list'),
                     controller: _scrollController,
                     padding: const EdgeInsets.all(12),
                     itemCount: visible.length,
-                    itemBuilder: (context, index) {
-                      final line = visible[index].display;
-                      final color = _lineColor(scheme, line);
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 1),
-                        child: Text(
-                          line,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 11,
-                            color: color,
-                          ),
-                        ),
-                      );
-                    },
+                    itemBuilder: (context, index) => _logRow(scheme, index),
                   ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _logRow(ColorScheme scheme, int index) {
+    final line = _visible.elementAt(index).display;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Text(
+        line,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11,
+          color: _lineColor(scheme, line),
+        ),
+      ),
+    );
+  }
+
+  int _rowsBeforeAnchor() {
+    final id = _pausedAtId;
+    if (id == null) return _visible.length;
+    var first = 0;
+    var end = _visible.length;
+    while (first < end) {
+      final middle = first + (end - first) ~/ 2;
+      if (_visible.elementAt(middle).record.id <= id) {
+        first = middle + 1;
+      } else {
+        end = middle;
+      }
+    }
+    return first;
+  }
+
+  Widget _anchoredLogList(ColorScheme scheme) {
+    const center = ValueKey('logs_after_anchor');
+    const inset = 12.0;
+    final before = _rowsBeforeAnchor();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: inset),
+      child: CustomScrollView(
+        key: const ValueKey('logs_list'),
+        controller: _scrollController,
+        anchor: _tailAnchor,
+        center: center,
+        semanticChildCount: _visible.length,
+        slivers: [
+          // Laid out after the older rows in the upward-growing half. Their
+          // actual height lets a short history sit at the top of the viewport.
+          SliverLayoutBuilder(
+            builder: (context, constraints) {
+              final height = constraints.viewportMainAxisExtent;
+              if (height > 0) {
+                final anchor =
+                    ((constraints.precedingScrollExtent + inset) / height)
+                        .clamp(0.0, (1 - inset / height).clamp(0.0, 1.0));
+                if (anchor != _tailAnchor) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && anchor != _tailAnchor) {
+                      setState(() => _tailAnchor = anchor);
+                    }
+                  });
+                }
+              }
+              return const SliverToBoxAdapter(child: SizedBox(height: inset));
+            },
+          ),
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => _logRow(scheme, before - 1 - index),
+              childCount: before,
+              semanticIndexCallback: (_, index) => before - 1 - index,
+            ),
+          ),
+          SliverList(
+            key: center,
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => _logRow(scheme, before + index),
+              childCount: _visible.length - before,
+              semanticIndexOffset: before,
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: inset)),
         ],
       ),
     );
@@ -682,11 +861,12 @@ class _LogsScreenState extends State<LogsScreen> {
 }
 
 class _LogLine {
-  _LogLine(this.raw) : socks5 = Socks5LogEntry.tryParse(raw);
+  _LogLine(this.record) : socks5 = Socks5LogEntry.tryParse(record.line);
 
-  final String raw;
+  final RuntimeLog record;
+  String get raw => record.line;
   final Socks5LogEntry? socks5;
-  String get display => socks5?.displayLine ?? raw;
+  late final String display = socks5?.displayLine ?? raw;
 }
 
 class _SocksLogConfiguration {

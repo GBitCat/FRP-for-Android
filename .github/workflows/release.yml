@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. 0.2.0 (tag will be v0.2.0)'
+        description: 'Release version (published as v<version>)'
         required: true
-        default: '0.2.0'
+        default: '0.3.0'
       version_code:
         description: 'Monotonically increasing Android version code'
         required: true
-        default: '14'
+        default: '15'
 
 permissions:
   contents: read
@@ -71,8 +71,10 @@ jobs:
           test -x "$sdkmanager"
           "$sdkmanager" --install \
             "platforms;android-36" \
+            "platforms;android-37.0" \
             "build-tools;35.0.0" \
             "build-tools;36.0.0" \
+            "build-tools;37.0.0" \
             "ndk;28.2.13676358"
           yes | "$sdkmanager" --licenses || true
 
@@ -84,8 +86,11 @@ jobs:
           flutter build apk --release --target-platform android-arm64 \
             --build-name "$RELEASE_VERSION" --build-number "$RELEASE_VERSION_CODE"
           apk=build/app/outputs/flutter-apk/app-release.apk
-          aapt2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
-          "$aapt2" dump badging "$apk" | grep -q "minSdkVersion:'28'"
+          aapt2="$ANDROID_HOME/build-tools/37.0.0/aapt2"
+          badging="$RUNNER_TEMP/built-apk-badging.txt"
+          "$aapt2" dump badging "$apk" > "$badging"
+          grep -Fxq "minSdkVersion:'28'" "$badging"
+          grep -Fxq "targetSdkVersion:'37'" "$badging"
           (cd "$(dirname "$apk")" && sha256sum "$(basename "$apk")" > app-release.apk.sha256)
 
       - name: Upload unsigned release input
@@ -112,7 +117,7 @@ jobs:
       RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_VERSION_CODE: ${{ inputs.version_code }}
       SIGNING_MIGRATION_APPROVED: ${{ vars.FRP_SIGNING_MIGRATION_APPROVED }}
-      REQUIRED_FRPC_SHA256: 6fa9626dd40dd83b85d3d49d909849ab96caeb0339bcf32835e7523eac2186fe
+      REQUIRED_FRPC_SHA256: b753f3e4e41b0a7a319666eb216808cf912dc969d8dd18c7b42ec7c090e0e292
       REQUIRED_CERT_ENGINE_SHA256: 46f36078a94d62068dc8712e1d7a00047e6f6741c0b55617337191069760eda9
       REQUIRED_PREVIOUS_CERT_SHA256: 6bbcde4382b2422d950e46d077167571e0edee486c6db03eb622a7add8d270d8
 
@@ -128,7 +133,7 @@ jobs:
           set -Eeuo pipefail
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           test -x "$sdkmanager"
-          "$sdkmanager" --install "build-tools;36.0.0"
+          "$sdkmanager" --install "build-tools;37.0.0"
           yes | "$sdkmanager" --licenses || true
 
       - name: Download verified unsigned artifact
@@ -145,8 +150,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           apk="$RUNNER_TEMP/release-input/app-release.apk"
-          aapt2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
-          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          aapt2="$ANDROID_HOME/build-tools/37.0.0/aapt2"
+          apksigner="$ANDROID_HOME/build-tools/37.0.0/apksigner"
           test -f "$apk"
           test -x "$aapt2"
           test -x "$apksigner"
@@ -156,13 +161,13 @@ jobs:
           badging="$RUNNER_TEMP/unsigned-apk-badging.txt"
           "$aapt2" dump badging "$apk" > "$badging"
           grep -Fq "package: name='com.frp.frp_app' versionCode='$RELEASE_VERSION_CODE' versionName='$RELEASE_VERSION'" "$badging"
-          grep -Fq "minSdkVersion:'28'" "$badging"
-          grep -Fq "targetSdkVersion:'36'" "$badging"
+          grep -Fxq "minSdkVersion:'28'" "$badging"
+          grep -Fxq "targetSdkVersion:'37'" "$badging"
           if grep -Fq 'application-debuggable' "$badging"; then
             echo 'Release input must not be debuggable' >&2
             exit 1
           fi
-          if "$apksigner" verify --min-sdk-version 28 --max-sdk-version 36 "$apk" >/dev/null 2>&1; then
+          if "$apksigner" verify --min-sdk-version 28 --max-sdk-version 37 "$apk" >/dev/null 2>&1; then
             echo 'Release input must be unsigned' >&2
             exit 1
           fi
@@ -222,7 +227,7 @@ jobs:
           printf '%s\n' "$expected_current" > "$current_fingerprint"
           chmod 0600 "$lineage" "$current_fingerprint"
 
-          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          apksigner="$ANDROID_HOME/build-tools/37.0.0/apksigner"
           "$apksigner" lineage --in "$lineage" --print-certs -v > "$lineage_report"
           chmod 0600 "$lineage_report"
 
@@ -288,7 +293,7 @@ jobs:
           mkdir -p "$output_dir"
           install -m 0600 "$input_apk" "$output_apk"
 
-          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          apksigner="$ANDROID_HOME/build-tools/37.0.0/apksigner"
 
           verify_lineage() {
             local input="$1"
@@ -336,21 +341,20 @@ jobs:
             --key-pass env:KEY_PASSWORD \
             "$output_apk"
 
+          # BEGIN signed APK verification (also exercised by the unprivileged CI job).
           verify_output="$RUNNER_TEMP/apksigner-verify.txt"
           "$apksigner" verify --verbose --print-certs \
-            --min-sdk-version 28 --max-sdk-version 36 "$output_apk" | tee "$verify_output"
+            --min-sdk-version 28 --max-sdk-version 37 "$output_apk" | tee "$verify_output"
           grep -Fxq 'Verified using v1 scheme (JAR signing): false' "$verify_output"
           grep -Fxq 'Verified using v2 scheme (APK Signature Scheme v2): false' "$verify_output"
           grep -Fxq 'Verified using v3 scheme (APK Signature Scheme v3): true' "$verify_output"
           grep -Fxq 'Number of signers: 1' "$verify_output"
-          mapfile -t actual_signers < <(
-            sed -n 's/^Signer #[0-9][0-9]* certificate SHA-256 digest: //p' \
-              "$verify_output" | tr '[:lower:]' '[:upper:]'
-          )
-          test "${#actual_signers[@]}" -eq 1
-          test "${actual_signers[0]}" = "$expected_current"
+          # Build Tools 37 labels the current certificate by its signature scheme.
+          signer_line="$(grep -F 'certificate SHA-256 digest:' "$verify_output")"
+          test "$signer_line" = "V3.0 Signer: certificate SHA-256 digest: ${expected_current,,}"
+          # END signed APK verification.
           verify_lineage "$output_apk" "$RUNNER_TEMP/output-lineage.txt"
-          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$output_apk"
+          "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c -P 16 -v 4 "$output_apk"
           (cd "$output_dir" && sha256sum app-release.apk > app-release.apk.sha256)
 
       - name: Attest signed APK build provenance

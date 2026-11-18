@@ -6,10 +6,10 @@ The Android application embeds an XUDP-enabled `frpc` built reproducibly from
 - Base release: `v0.72.0`
 - Source commit: `e8731afd8a2b12765636368f762b99d121a97a26`
 - Source archive SHA-256: `ee7b84935e608df805c46a81c33266517ae1596919ad5b194fe6b3378c447603`
-- Source overlays: none
+- Source overlay: `scripts/patches/frp-android-local-endpoint.patch`
 - Go toolchain: `go1.26.11`
 - Build tags: `frpc,noweb`
-- Embedded `frpc` SHA-256: `6fa9626dd40dd83b85d3d49d909849ab96caeb0339bcf32835e7523eac2186fe`
+- Embedded `frpc` SHA-256: `b753f3e4e41b0a7a319666eb216808cf912dc969d8dd18c7b42ec7c090e0e292`
 - Supported ABI: `arm64-v8a`
 
 This rebuild of `v0.72.0` propagates target EOF through the provider's legacy
@@ -24,7 +24,7 @@ forwarded without inspecting RTSP framing or synthesizing EOF. The remote frpc
 running `proxies.plugin.type = "socks5"` must also include the upstream EOF fix;
 upgrading only the Android visitor cannot fix an older provider. The fix closes
 the logical work stream through its wrappers, preserving sibling streams on the
-shared transport. No local source overlay is applied.
+shared transport. The Android overlay adds a per-launch, mutually authenticated HMAC-SHA256 handshake on the app-managed loopback SOCKS endpoints. The launch key is delivered through the child’s private standard-input pipe. The proof binds both TCP ports, visitor name, fresh nonces and the UDP frame limit reported by the local core. Ordinary visitor sockets and remote FRP traffic retain their existing wire formats.
 
 The existing Android visitor SOCKS5 configuration and `frpc nathole discover`
 CLI remain compatible. Autonomous UDP sessions still require compatible
@@ -34,7 +34,7 @@ SUDP/XUDP implementations on both frpc endpoints and
 The upstream release already requires Go 1.26 and includes
 `golang.org/x/crypto v0.58.0`, `golang.org/x/net v0.62.0`, and
 `github.com/Azure/go-ntlmssp v0.1.1`. The previous 0.71 dependency security
-overlay is no longer needed; the pinned source archive is built unmodified.
+overlay was removed. The source preparation step applies only the local endpoint overlay. For offline verification set `FRP_SOURCE_ARCHIVE` to the pinned tarball; the same archive hash check applies.
 
 Run `scripts/build_frpc_android.sh --check` in the project container to fetch
 the hash-pinned source, rebuild the binary, and

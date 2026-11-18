@@ -12,6 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.Closeable
+import java.io.DataInputStream
 import java.io.InputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -19,7 +20,13 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
 import java.net.SocketTimeoutException
+import java.nio.ByteBuffer
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -562,6 +569,84 @@ class Socks5ForwarderIntegrationTest {
     }
 
     @Test
+    fun stalledFirstUpstreamLeavesTimeForTheNextVisitor() {
+        SocksFixture(authenticationGate = CountDownLatch(1)).use { stalled ->
+            SocksFixture(prefix = "healthy:").use { healthy ->
+                val port = freeTcpPort()
+                val route = rule("tcp", port, upstream(stalled.port), upstream(healthy.port))
+                Socks5Forwarder(listOf(route), handshakeTimeoutMs = 2_000).use { forwarder ->
+                    forwarder.start()
+                    assertEquals("healthy:ping", tcpRequest(port, "ping"))
+                    assertEquals(1, stalled.accepted.get())
+                    assertEquals(1, healthy.authenticated.get())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun readyBackupServesImmediateRequestsWhileFirstVisitorIsStillPreparing() {
+        SocksFixture(authenticationGate = CountDownLatch(1)).use { stalled ->
+            SocksFixture(prefix = "ready:").use { healthy ->
+                val port = freeTcpPort()
+                val route = rule("tcp", port, upstream(stalled.port), upstream(healthy.port)).copy(mode = "immediate")
+                val events = CopyOnWriteArrayList<String>()
+                Socks5Forwarder(listOf(route), report = events::add, handshakeTimeoutMs = 12_000).use { forwarder ->
+                    forwarder.start()
+                    assertTrue(waitUntil { events.any { it.contains("upstream 2: immediate channel ready") } })
+                    assertEquals("ready:ping", tcpRequest(port, "ping"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun unverifiedEndpointReceivesNoSocksGreetingOrCredentials() {
+        val auth = FrpcEndpointAuth()
+        ServerSocket(0, 1, LOOPBACK).use { unverified ->
+            val port = freeTcpPort()
+            val route = rule("tcp", port, upstream(unverified.localPort, "fixture-user", "fixture-password"))
+                .copy(mode = "immediate")
+            Socks5Forwarder(listOf(route), handshakeTimeoutMs = 2_000, endpointAuth = auth).use { forwarder ->
+                forwarder.start()
+                unverified.soTimeout = 3_000
+                unverified.accept().use { socket ->
+                    socket.soTimeout = 2_000
+                    val input = DataInputStream(socket.getInputStream())
+                    input.readFully(ByteArray(32)) // independent random challenge
+                    socket.getOutputStream().write(ByteArray(66)) // no valid endpoint proof
+                    assertEquals(-1, input.read())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun advertisedCoreUdpLimitCountsOnlyPacketsActuallyAcceptedForSubmission() {
+        val key = ByteArray(32).also(SecureRandom()::nextBytes)
+        val auth = FrpcEndpointAuth(key)
+        SocksFixture(endpointKey = key, frameLimit = 1056).use { fixture ->
+            val port = freeUdpPort()
+            val route = rule("udp", port, upstream(fixture.port)).copy(logContext = context("core-mtu"))
+            val events = CopyOnWriteArrayList<String>()
+            Socks5Forwarder(listOf(route), report = events::add, handshakeTimeoutMs = 3_000, endpointAuth = auth).use { forwarder ->
+                forwarder.start()
+                DatagramSocket(0, LOOPBACK).use { client ->
+                    val tooLarge = ByteArray(1047)
+                    client.send(DatagramPacket(tooLarge, tooLarge.size, LOOPBACK, port))
+                    val boundary = "v".repeat(1046)
+                    assertTrue(udpRequest(client, port, boundary).endsWith(boundary))
+                }
+            }
+            assertTrue(waitUntil { finalTraffic(events, port) != null })
+            val traffic = finalTraffic(events, port)!!
+            assertEquals(2L, traffic.getLong("udpLocalRxPackets"))
+            assertEquals(1L, traffic.getLong("udpFrpcTxPackets"))
+            assertEquals(1L, traffic.getJSONObject("drops").getJSONObject("oversize").getLong("packets"))
+        }
+    }
+
+    @Test
     fun failedVisitorTriesOtherConfiguredVisitorAndWrongCredentialsFailClosed() {
         SocksFixture(username = "alice", password = "correct", prefix = "ok:").use { fixture ->
             val port = freeTcpPort()
@@ -615,7 +700,8 @@ class Socks5ForwarderIntegrationTest {
         SocksFixture().use { fixture ->
             val port = freeUdpPort()
             Socks5Forwarder(listOf(rule("udp", port, upstream(fixture.port))),
-                handshakeTimeoutMs = 3_000, udpIdleTimeoutMs = 150).use { forwarder ->
+                // Allow several selector cycles for the loopback SOCKS handshake and echo.
+                handshakeTimeoutMs = 3_000, udpIdleTimeoutMs = 1_000).use { forwarder ->
                 forwarder.start()
                 DatagramSocket(0, LOOPBACK).use { client ->
                     assertTrue(udpRequest(client, port, "idle").endsWith(":idle"))
@@ -697,7 +783,8 @@ class Socks5ForwarderIntegrationTest {
         socket.soTimeout = 4_000
         val body = text.toByteArray()
         socket.send(DatagramPacket(body, body.size, LOOPBACK, port))
-        val reply = DatagramPacket(ByteArray(1024), 1024)
+        val buffer = ByteArray(maxOf(1024, body.size + 16))
+        val reply = DatagramPacket(buffer, buffer.size)
         socket.receive(reply)
         assertEquals(port, reply.port)
         return reply.data.copyOf(reply.length).toString(Charsets.UTF_8)
@@ -724,6 +811,8 @@ class Socks5ForwarderIntegrationTest {
         private val dropUdpReplies: Boolean = false,
         private val streamingTcp: Boolean = false,
         private val authenticationDelayMs: Long = 0,
+        private val endpointKey: ByteArray? = null,
+        private val frameLimit: Int = 0,
         private val authenticationGate: CountDownLatch? = null,
     ) : Closeable {
         private val server = ServerSocket(0, 8, LOOPBACK)
@@ -753,6 +842,24 @@ class Socks5ForwarderIntegrationTest {
             socket.soTimeout = 4_000
             val input = socket.getInputStream()
             val output = socket.getOutputStream()
+            if (endpointKey != null) {
+                val key = endpointKey
+                val challenge = read(input, 32)
+                val nonce = ByteArray(32).also(SecureRandom()::nextBytes)
+                val fields = ByteBuffer.allocate(6).putShort(socket.port.toShort())
+                    .putShort(socket.localPort.toShort()).putShort(frameLimit.toShort()).array()
+                fun proof(role: String): ByteArray {
+                    val mac = Mac.getInstance("HmacSHA256")
+                    mac.init(SecretKeySpec(key, "HmacSHA256"))
+                    mac.update("frpc-android-endpoint-v1/$role".toByteArray())
+                    mac.update(fields)
+                    mac.update(challenge)
+                    mac.update(nonce)
+                    return mac.doFinal("visitor-$port".toByteArray())
+                }
+                output.write(fields.copyOfRange(4, 6) + nonce + proof("server"))
+                if (!MessageDigest.isEqual(read(input, 32), proof("client"))) return
+            }
             val hello = read(input, 2)
             assertEquals(5, hello[0].toInt())
             val methods = read(input, hello[1].toInt() and 255)
@@ -797,32 +904,45 @@ class Socks5ForwarderIntegrationTest {
                 udp.soTimeout = 1_000
                 sockets[udp] = true
                 activeControls.incrementAndGet()
+                var worker: Thread? = null
                 try {
                     output.write(byteArrayOf(5, 0, 0, 1, 127, 0, 0, 1,
                         (udp.localPort shr 8).toByte(), udp.localPort.toByte()))
-                    Thread {
-                        while (!closed.get() && !udp.isClosed) {
-                            val packet = DatagramPacket(ByteArray(2048), 2048)
-                            try { udp.receive(packet) } catch (_: SocketTimeoutException) { continue } catch (_: Exception) { break }
-                            if (dropUdpReplies) continue
-                            val data = packet.data.copyOf(packet.length)
-                            val addressSize = if (data[3].toInt() == 1) 4 else 16
-                            val headerSize = 4 + addressSize + 2
-                            val reply = data.copyOf(headerSize) + "$associationId:".toByteArray() + data.copyOfRange(headerSize, data.size)
-                            if (malformedReplyFirst) {
-                                val malformed = byteArrayOf(0, 0, 0, 0)
-                                udp.send(DatagramPacket(malformed, malformed.size, packet.socketAddress))
+                    worker = Thread {
+                        try {
+                            while (!closed.get() && !udp.isClosed) {
+                                val packet = DatagramPacket(ByteArray(2048), 2048)
+                                try { udp.receive(packet) } catch (_: SocketTimeoutException) { continue }
+                                if (dropUdpReplies) continue
+                                val data = packet.data.copyOf(packet.length)
+                                val addressSize = if (data[3].toInt() == 1) 4 else 16
+                                val headerSize = 4 + addressSize + 2
+                                val reply = data.copyOf(headerSize) + "$associationId:".toByteArray() + data.copyOfRange(headerSize, data.size)
+                                if (malformedReplyFirst) {
+                                    val malformed = byteArrayOf(0, 0, 0, 0)
+                                    udp.send(DatagramPacket(malformed, malformed.size, packet.socketAddress))
+                                }
+                                if (fragmentedReplyFirst) {
+                                    val fragment = reply.copyOf().also { it[2] = 1 }
+                                    udp.send(DatagramPacket(fragment, fragment.size, packet.socketAddress))
+                                }
+                                udp.send(DatagramPacket(reply, reply.size, packet.socketAddress))
                             }
-                            if (fragmentedReplyFirst) {
-                                val fragment = reply.copyOf().also { it[2] = 1 }
-                                udp.send(DatagramPacket(fragment, fragment.size, packet.socketAddress))
-                            }
-                            udp.send(DatagramPacket(reply, reply.size, packet.socketAddress))
+                        } catch (failure: SocketException) {
+                            // Closing the association can race both receive and
+                            // reply. Surface socket errors on an active fixture.
+                            if (!udp.isClosed && !closed.get()) throw failure
                         }
                     }.apply { isDaemon = true; start() }
                     socket.soTimeout = 0
                     while (input.read() >= 0) { }
-                } finally { udp.close(); sockets.remove(udp); activeControls.decrementAndGet() }
+                } finally {
+                    udp.close()
+                    worker?.join(2_000)
+                    check(worker?.isAlive != true) { "UDP echo fixture did not stop" }
+                    sockets.remove(udp)
+                    activeControls.decrementAndGet()
+                }
             }
         }
 

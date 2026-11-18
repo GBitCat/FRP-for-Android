@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
+### Added
+
+- Visitors can forward TCP and UDP through a peer's SOCKS5 service. Named port groups support per-group target IPs and on-demand or immediate connections.
+- P2P configurations probe resolved STUN addresses before startup. Server settings support wire protocols v1 and v2.
+- SOCKS5 logs can be filtered by configuration and port group, then exported using the active filters.
+
+### Changed
+
+- Updated the embedded frpc-xudp core to v0.72.0, including TCP SOCKS5 EOF handling. Update the peer providing SOCKS5 to pick up that fix.
+- Target Android 17 (API 37) and retain Android 9 (API 28) support for release builds. On Android 17, starting a tunnel can request Nearby devices access for LAN peers.
+- Reduced memory use when viewing long log histories and importing small configuration backups. Release builds reclaim two Dart debug files left by an in-place upgrade.
+
+### Fixed
+
+- Android saves the pending configuration encrypted and sends only a request ID to the service, so TOML files up to 512 KiB can start reliably. Restarting the service also prevents a previous frpc process from removing the new process's configuration file.
+- Ordinary visitors that bind to a hostname can run alongside SOCKS5 listeners on separate ports.
+
+### Security
+
+- The Android forwarder and the embedded frpc authenticate both ends of each internal SOCKS connection with a new secret for each service start.
+
 ## [0.2.0] - 2026-09-04
 
 ### Added

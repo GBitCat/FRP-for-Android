@@ -230,7 +230,7 @@ class _ConfigsScreenState extends State<ConfigsScreen> {
 
   Widget _configurationRow(BuildContext context, ConfigGroup group) {
     final identity = group.isGroup
-        ? 'group_${group.groupId}'
+        ? 'group_${group.primary.serverId}_${group.groupId}'
         : '${group.primary.id}';
     final scheme = Theme.of(context).colorScheme;
     return Padding(
@@ -314,7 +314,9 @@ class _ConfigsScreenState extends State<ConfigsScreen> {
                             (member) => member.id == anchorId,
                           ) ||
                           (current.isGroup &&
-                              candidate.groupId == current.groupId),
+                              candidate.groupId == current.groupId &&
+                              candidate.primary.serverId ==
+                                  current.primary.serverId),
                     )
                     .firstOrNull ??
                 current;
@@ -353,7 +355,9 @@ class _ConfigsScreenState extends State<ConfigsScreen> {
                     (candidate) =>
                         candidate.primary.id == current.primary.id ||
                         (current.isGroup &&
-                            candidate.groupId == current.groupId),
+                            candidate.groupId == current.groupId &&
+                            candidate.primary.serverId ==
+                                current.primary.serverId),
                   )
                   .firstOrNull ??
               current;
@@ -511,7 +515,8 @@ Future<void> _confirmDeleteGroup(
   title: 'Delete Group',
   message:
       "Are you sure you want to delete '${group.groupName}' and all its configs?",
-  remove: () => appState.deleteGroup(group.groupId),
+  remove: () =>
+      appState.deleteGroup(group.groupId, serverId: group.primary.serverId),
   failureMessage: 'Unable to delete configuration group',
 );
 
@@ -782,7 +787,11 @@ class _ConfigGroupItem extends StatelessWidget {
                 context,
                 name: group.groupName,
                 enabled: v,
-                apply: () => appState.setGroupEnabled(group.groupId, v),
+                apply: () => appState.setGroupEnabled(
+                  group.groupId,
+                  v,
+                  serverId: group.primary.serverId,
+                ),
                 failureMessage: 'Unable to update configuration group',
               );
             },

@@ -20,7 +20,7 @@
 > `frpc` 和作为 visitor 的 `frpc`（本应用）必须全部部署兼容的
 > [`GBitCat/frp-xudp`](https://github.com/GBitCat/frp-xudp) 版本，建议保持完全相同的
 > Release。不要将官方 `fatedier/frp`、其他 fork 或不同版本与 XUDP 节点混用。
-> 当前 APK 内置版本为 `v0.72.0`，固定提交 `e8731afd`，包含 SOCKS5 TCP EOF、UDP 会话与 XUDP 连接稳定性修复。应用层已撤销 RTSP EOF 补丁，直接透传内核连接；对端运行 SOCKS5 插件的 frpc 也需要更新到包含 EOF 修复的版本。
+> 当前 APK 内置版本为 `v0.72.0`，基于固定提交 `e8731afd`，Android 构建对应用内部 SOCKS 端点增加每次启动独立的双向认证。内核包含 SOCKS5 TCP EOF、UDP 会话与 XUDP 连接稳定性修复。应用层已撤销 RTSP EOF 补丁，直接透传内核连接；对端运行 SOCKS5 插件的 frpc 也需要更新到包含 EOF 修复的版本。
 > 上游沿用了版本号，其余节点应优先使用同一提交构建。
 
 ### STUN 地址探测与选择
@@ -69,7 +69,7 @@ TCP 使用提供端的 `socks5` 插件；UDP 使用新版 `socks5_udp` 插件，
 TCP visitor。提供端配置由用户部署，本轮仅提供 visitor 侧表单和转接。
 目标 IP 中的 `127.0.0.1` 指提供端所在的主机或容器。
 
-同组同协议的多个 visitor 都参与转接；共用监听时按新连接/UDP 来源会话轮换，
+同组同协议的多个 visitor 都参与转接。即时模式优先使用已预热的线路，其余情况按新连接或 UDP 来源会话轮换，
 每个会话固定上游，避免混合不同连接的响应。监听和连接由 Android 前台服务管理，
 关闭页面后仍可运行，并随配置停用、删除或服务停止而释放。账号密码随配置加密保存，
 普通脱敏导出会清除 SOCKS5 密码。
@@ -82,6 +82,7 @@ TCP/UDP 端口归在一起，每行注明协议和实际端口。筛选依据固
 SOCKS 记录监听、预备通道和业务建连状态，并定期汇总累计收发统计：UDP 显示
 本地收到、提交给本地 frpc、从 frpc 收到、返回本地应用的包数和字节数，以及
 载荷大小范围和本地可观察到的丢弃；TCP 显示两个方向实际写出的字节数。
+内核会在本地端点认证时返回该 UDP visitor 的帧长上限。超出上限的发送包会计入该 Ports 条目的 `oversize`，并在限频日志中显示允许的载荷字节数。
 活动端口通常每 5 秒汇总一次，多端口时限速轮转；停止时输出最终统计。
 提交给本地 frpc 不代表已送达对端，也无法直接确认内核内部静默丢包。
 日志不记录账号密码或数据包内容。
@@ -151,9 +152,9 @@ sha256sum --check app-release.apk.sha256
 ## 🛠️ 开发环境
 
 - Flutter 3.x（stable）
-- Go 1.26.8 (the native build scripts require this exact version)
+- Go 1.26.8 用于证书组件；frpc 构建脚本自动选择 Go 1.26.11
 - JDK 21
-- Android SDK + NDK r28c
+- Android 17 SDK (API 37) + NDK r28c
 - Git
 
 ### Docker 开发环境（持久缓存）
@@ -184,9 +185,11 @@ git clone https://github.com/GBitCat/FRP-for-Android.git
 cd FRP-for-Android
 ./scripts/install-hooks.sh
 ./docker-dev.sh /workspace/scripts/build_frpc_cert_android.sh
-./docker-dev.sh flutter build apk --release
-# 输出：flutter_app/build/app/outputs/flutter-apk/app-release.apk
+./docker-dev.sh flutter build apk --debug --target-platform android-arm64
+# 可安装的开发包：flutter_app/build/app/outputs/flutter-apk/app-debug.apk
 ```
+
+本地 `flutter build apk --release` 生成未签名 APK，供发布工作流校验和签名。手机安装正式版请使用 GitHub Releases 中的 `app-release.apk`。
 
 发布密钥、密码、签名 lineage、用户备份和截图必须存放在 Git checkout 与所有 Docker
 挂载/构建上下文之外。仓库钩子会拦截敏感文件名，GitHub Actions 会对完整历史运行固定
@@ -314,7 +317,7 @@ secretKey = "your_secret_key"
 ## ⚠️ 注意事项
 
 1. **架构**：仅支持 `arm64-v8a`（绝大多数现代 Android 手机）
-2. **Android 版本**：正式 Release APK 支持 Android 9.0+（API 28+）；Android 13+ 需要允许通知权限
+2. **Android 版本**：正式 Release APK 支持 Android 9.0+（API 28+），以 Android 17（API 37）为目标。Android 13+ 可授权显示前台服务通知。Android 17+ 首次启动隧道时会请求“附近设备”权限，用于连接局域网对端或接受来自局域网的 TCP/UDP 连接。拒绝后仍可使用公网和本机回环连接，也可在系统的应用权限设置中补授权。
 3. **frps 端**：需在 frps 上配置对应的 stcp/xtcp 代理，且对端设备需运行 frpc 并注册相同 secretKey
 4. **XUDP 全链路版本**：`frps`、XUDP proxy 端 `frpc`、XUDP visitor 端 `frpc` 必须全部使用兼容的 `GBitCat/frp-xudp`，推荐统一为当前内置的 `v0.72.0`；不能只在 Android 端替换，也不要与官方 FRP 或其他 fork 混用
 5. **后台驻留**：为保证长时间稳定连接，请允许通知权限、取消电池优化（应用内首次启动会引导跳转），部分国产 ROM 还需在系统设置中允许后台运行

@@ -292,11 +292,7 @@ class ConfigStore {
 
     final configIds = <int>{};
     for (final config in snapshot.configs) {
-      final error = ConfigValidator.validate(
-        config,
-        allowMissingSecrets: !config.enabled,
-        allowIncompleteLegacy: !config.enabled,
-      );
+      final error = ConfigValidator.validateStored(config);
       if (error != null) throw FormatException(error);
       if (config.id <= 0 || !configIds.add(config.id)) {
         throw const FormatException('proxy IDs must be positive and unique');
@@ -323,11 +319,7 @@ class ConfigStore {
           .map((e) => FrpConfig.fromJson((e as Map).cast<String, dynamic>()))
           .toList(growable: false);
       for (final config in result) {
-        final error = ConfigValidator.validate(
-          config,
-          allowMissingSecrets: !config.enabled,
-          allowIncompleteLegacy: !config.enabled,
-        );
+        final error = ConfigValidator.validateStored(config);
         if (error != null) throw FormatException(error);
       }
       await _migratePlaintext(_kConfigs, raw, () => saveConfigs(result));
@@ -344,11 +336,7 @@ class ConfigStore {
       throw const FormatException('too many proxy records');
     }
     for (final config in configs) {
-      final error = ConfigValidator.validate(
-        config,
-        allowMissingSecrets: !config.enabled,
-        allowIncompleteLegacy: !config.enabled,
-      );
+      final error = ConfigValidator.validateStored(config);
       if (error != null) throw FormatException(error);
     }
     await _writeSensitive(
