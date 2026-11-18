@@ -3,6 +3,8 @@ package com.frp.frp_app
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Closeable
+import java.io.DataInputStream
+import java.io.FilterInputStream
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
@@ -171,6 +173,7 @@ internal class Socks5Forwarder(
     private val report: (String) -> Unit = {},
     private val handshakeTimeoutMs: Int = 75_000,
     private val udpIdleTimeoutMs: Long = 120_000,
+    private val endpointAuth: FrpcEndpointAuth? = null,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val selector = Selector.open()
@@ -185,6 +188,7 @@ internal class Socks5Forwarder(
     @Volatile private var listeners: List<Listener> = emptyList()
     @Volatile private var eventThread: Thread? = null
     private var nextTrafficMaintenanceAt = 0L
+    private var nextSessionMaintenanceAt = 0L
     private var trafficCursor = 0
     // Warm channels have their own capacity and workers, so a missing upstream
     // cannot occupy any worker/session needed by an actual application request.
@@ -211,7 +215,10 @@ internal class Socks5Forwarder(
         val readyAnnounced = AtomicBoolean(false)
         fun orderedUpstreams(): List<Socks5Upstream> {
             val start = Math.floorMod(sequence.getAndIncrement(), rule.upstreams.size)
-            return rule.upstreams.indices.map { rule.upstreams[(start + it) % rule.upstreams.size] }
+            val routes = rule.upstreams.indices.map { rule.upstreams[(start + it) % rule.upstreams.size] }
+            if (warm.isEmpty() || routes.size < 2) return routes
+            val available = warm.filter { it.hasPreparedChannel() }.mapTo(HashSet()) { it.upstream }
+            return routes.sortedBy { it !in available }
         }
     }
 
@@ -264,7 +271,7 @@ internal class Socks5Forwarder(
         }
     }
 
-    private inner class Transport(val control: SocketChannel, val datagrams: DatagramChannel? = null) {
+    private inner class Transport(val control: SocketChannel, val datagrams: DatagramChannel?, val frameLimit: Int) {
         fun release(owner: Resources) {
             owner.release(control)
             datagrams?.let(owner::release)
@@ -357,6 +364,9 @@ internal class Socks5Forwarder(
         }
 
         @Synchronized
+        fun hasPreparedChannel(): Boolean = ready != null
+
+        @Synchronized
         fun take(owner: Resources): Transport? {
             val value = ready ?: return null
             if (!healthy(value)) { failed(value); return null }
@@ -446,6 +456,7 @@ internal class Socks5Forwarder(
         private val pending = ArrayDeque<ByteArray>()
         private var pendingBytes = 0
         private var relay: DatagramChannel? = null
+        private var frameLimit = MAX_DATAGRAM
         private val header = byteArrayOf(0, 0, 0) + encodeAddress(
             numericAddress(listener.rule.targetIp), listener.rule.targetPort)
         @Volatile private var ready = false
@@ -453,8 +464,11 @@ internal class Socks5Forwarder(
         @Synchronized fun offer(payload: ByteArray) {
             if (ended.get()) { listener.traffic.drop(Socks5Drop.SESSION_CLOSED, payload.size); return }
             lastActivity.set(now())
-            if (payload.size + header.size > MAX_DATAGRAM) {
-                listener.traffic.drop(Socks5Drop.OVERSIZE, payload.size); return
+            if (payload.size + header.size > frameLimit) {
+                listener.traffic.drop(Socks5Drop.OVERSIZE, payload.size)
+                warn(listener, "udp_oversize",
+                    "UDP payload ${payload.size}B exceeds the local forwarding limit of ${frameLimit - header.size}B")
+                return
             }
             if (!ready) {
                 if (pending.size < 16 && pendingBytes + payload.size <= 256 * 1024) {
@@ -496,6 +510,7 @@ internal class Socks5Forwarder(
                             datagrams.register(selector, SelectionKey.OP_READ, UdpRelay(this))
                             controlChannel.register(selector, SelectionKey.OP_READ, UdpControl(this))
                             relay = datagrams
+                            frameLimit = transport.frameLimit
                             ready = true
                             while (pending.isNotEmpty()) {
                                 val payload = pending.removeFirst()
@@ -663,11 +678,15 @@ internal class Socks5Forwarder(
                     }
                 }
                 val time = now()
+                if (time < nextSessionMaintenanceAt) continue
+                nextSessionMaintenanceAt = time + WARM_MAINTENANCE_MS
                 sessions.keys.forEach { session ->
                     val negotiating = session.negotiationDeadline.get() > 0 && time >= session.negotiationDeadline.get()
                     val idle = session is UdpSession && time - session.lastActivity.get() > udpIdleTimeoutMs
-                    val writeExpired = listOf(session.blockedWriteA.get(), session.blockedWriteB.get())
-                        .any { it > 0 && time - it > WRITE_TIMEOUT_MS }
+                    val blockedA = session.blockedWriteA.get()
+                    val blockedB = session.blockedWriteB.get()
+                    val writeExpired = (blockedA > 0 && time - blockedA > WRITE_TIMEOUT_MS) ||
+                        (blockedB > 0 && time - blockedB > WRITE_TIMEOUT_MS)
                     if (negotiating || idle || writeExpired) {
                         val listener = when (session) { is TcpSession -> session.listener; is UdpSession -> session.listener; else -> null }
                         if (listener != null && !idle) warn(listener, "session_timeout",
@@ -768,8 +787,14 @@ internal class Socks5Forwarder(
         if (listener.rule.mode == "onDemand" && listener.connectionAnnounced.compareAndSet(false, true)) {
             log(listener.rule, "connect_start", "first request, connecting")
         }
-        for (upstream in listener.orderedUpstreams()) {
+        val upstreams = listener.orderedUpstreams()
+        for ((index, upstream) in upstreams.withIndex()) {
             if (session.ended.get() || closed.get()) throw IOException("SOCKS5 forwarding stopped")
+            // Reserve an equal share of the remaining total for each later
+            // route. A stalled first peer must not exhaust the fallback budget.
+            val start = now()
+            if (start >= deadline) break
+            val routeDeadline = start + (deadline - start) / (upstreams.size - index)
             // A peer may close a warm TCP stream between its EOF check and
             // CONNECT. Retry the same upstream freshly before falling back.
             val slot = listener.warm.firstOrNull { it.upstream == upstream }
@@ -777,11 +802,11 @@ internal class Socks5Forwarder(
             for (attempt in 0 until (if (prepared == null) 1 else 2)) {
                 var transport: Transport? = null
                 try {
-                    transport = prepared ?: establish(session, listener, upstream, deadline)
+                    transport = prepared ?: establish(session, listener, upstream, routeDeadline)
                     prepared = null
                     if (listener.rule.protocol == "tcp") {
                         request(transport.control.socket(), 1,
-                            numericAddress(listener.rule.targetIp), listener.rule.targetPort, deadline)
+                            numericAddress(listener.rule.targetIp), listener.rule.targetPort, routeDeadline)
                     }
                     session.negotiationDeadline.set(0)
                     if (listener.rule.mode == "onDemand" && listener.readyAnnounced.compareAndSet(false, true)) {
@@ -791,7 +816,7 @@ internal class Socks5Forwarder(
                 } catch (_: Exception) {
                     transport?.release(session)
                     prepared = null
-                    if (now() >= deadline || session.ended.get() || closed.get()) break
+                    if (now() >= routeDeadline || session.ended.get() || closed.get()) break
                 }
             }
             if (now() >= deadline) break
@@ -811,7 +836,11 @@ internal class Socks5Forwarder(
             socket.keepAlive = true
             socket.connect(InetSocketAddress(numericAddress(upstream.host), upstream.port), remaining(deadline))
             socket.soTimeout = remaining(deadline)
-            val input = socket.getInputStream()
+            val input = deadlineInput(socket, deadline)
+            val frameLimit = endpointAuth?.verify(socket, upstream.name, input)
+            if (frameLimit != null && (if (listener.rule.protocol == "udp") frameLimit < 1 else frameLimit != 0)) {
+                throw IOException("Unexpected local frpc endpoint transport")
+            }
             val output = socket.getOutputStream()
             val withAuth = upstream.username.isNotEmpty() || upstream.password.isNotEmpty()
             val method = if (withAuth) 2 else 0
@@ -838,7 +867,7 @@ internal class Socks5Forwarder(
                 datagrams.connect(InetSocketAddress(endpoint, reply.second))
             }
             socket.soTimeout = 0
-            return Transport(channel, datagrams)
+            return Transport(channel, datagrams, minOf(frameLimit ?: MAX_DATAGRAM, MAX_DATAGRAM))
         } catch (error: Exception) {
             owner.release(channel)
             datagrams?.let(owner::release)
@@ -849,7 +878,7 @@ internal class Socks5Forwarder(
     private fun request(socket: Socket, command: Int, address: InetAddress, port: Int, deadline: Long): Pair<InetAddress?, Int> {
         socket.soTimeout = remaining(deadline)
         socket.getOutputStream().write(byteArrayOf(5, command.toByte(), 0) + encodeAddress(address, port))
-        val input = socket.getInputStream()
+        val input = deadlineInput(socket, deadline)
         val response = readBytes(input, 3)
         if (response[0].toInt() != 5 || response[1].toInt() != 0 || response[2].toInt() != 0) {
             throw IOException("SOCKS5 connection was rejected")
@@ -938,6 +967,20 @@ internal class Socks5Forwarder(
             if (value <= 0) throw SocketTimeoutException("SOCKS5 negotiation timed out")
             return value.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         }
+
+        // A partial response must not restart the full per-route deadline.
+        private fun deadlineInput(socket: Socket, deadline: Long) = DataInputStream(
+            object : FilterInputStream(socket.getInputStream()) {
+                override fun read(): Int {
+                    socket.soTimeout = remaining(deadline)
+                    return super.read()
+                }
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    socket.soTimeout = remaining(deadline)
+                    return super.read(buffer, offset, length)
+                }
+            },
+        )
 
         private fun readBytes(input: InputStream, count: Int): ByteArray {
             val result = ByteArray(count)

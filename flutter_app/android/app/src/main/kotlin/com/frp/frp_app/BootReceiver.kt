@@ -8,7 +8,7 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_BOOT_COMPLETED -> FrpcService.ensureRunning(context, afterBoot = true)
             "android.intent.action.QUICKBOOT_POWERON" -> FrpcService.ensureRunning(context)
         }
     }

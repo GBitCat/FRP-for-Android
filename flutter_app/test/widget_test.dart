@@ -784,6 +784,49 @@ fallbackTimeoutMs = 3000''',
     },
   );
 
+  test('redacted backup masks credential headers in both TOML forms', () {
+    const server = ServerConfig(serverId: 'SERVER01');
+    for (final headers in [
+      '''[[proxies.healthCheck.httpHeaders]]
+value = "private-token"
+name = "Authorization"
+[[proxies.healthCheck.httpHeaders]]
+name = "Cookie"
+value = "private-cookie"
+[[proxies.healthCheck.httpHeaders]]
+name = "Accept"
+value = "application/json"''',
+      '''healthCheck.httpHeaders = [
+        {value = "private-token", name = "Authorization"},
+        {name = "Cookie", value = "private-cookie"},
+        {name = "Accept", value = "application/json"},
+      ]''',
+    ]) {
+      final config = FrpConfig(
+        id: 1,
+        name: 'headers',
+        manualToml:
+            '[[proxies]]\nname = "demo"\ntype = "tcp"\nloadBalancer.groupKey = "private-group" # private-comment\n$headers',
+      );
+      final bytes = ConfigImportExport.buildExportZip(
+        [config],
+        [server],
+        server.serverId,
+        const {},
+      );
+      final toml = ConfigImportExport.parseImportBytes(bytes)!
+          .configs
+          .single
+          .manualToml!;
+      expect(toml, isNot(contains('private-')));
+      expect(toml, contains('name = "demo"'));
+      expect(toml, contains('name = "Authorization"'));
+      expect(toml, contains('value = ""'));
+      expect(toml, contains('value = "application/json"'));
+      expect(toml, contains('loadBalancer.groupKey = ""'));
+    }
+  });
+
   test('redacted manual TOML handles a fully quoted dotted secret key', () {
     const server = ServerConfig(serverId: 'SERVER01');
     const config = FrpConfig(

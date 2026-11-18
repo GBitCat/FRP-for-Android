@@ -1,7 +1,6 @@
 package com.frp.frp_app
 
 import android.content.Context
-import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.flutter.plugin.common.MethodChannel
@@ -31,7 +30,7 @@ class StunProbeIntegrationTest {
 
     @Test
     fun bridgePublishesProbeOutcomeAndWeightWithoutDumpingRawOutput() {
-        assumeTrue(Build.SUPPORTED_ABIS.contains("arm64-v8a"))
+        assumeTrue(hasArm64Frpc())
         Fixture().use { first ->
             Fixture().use { second ->
                 first.otherPort = second.port
@@ -90,7 +89,7 @@ class StunProbeIntegrationTest {
 
     @Test
     fun realFrpcProbeClassifiesLocalStunAndRemovesTemporaryConfig() {
-        assumeTrue(Build.SUPPORTED_ABIS.contains("arm64-v8a"))
+        assumeTrue(hasArm64Frpc())
         Fixture().use { first ->
             Fixture().use { second ->
                 first.otherPort = second.port
@@ -112,7 +111,7 @@ class StunProbeIntegrationTest {
 
     @Test
     fun realFrpcTimeoutGetsZeroWeightSignalWithoutPublicDns() {
-        assumeTrue(Build.SUPPORTED_ABIS.contains("arm64-v8a"))
+        assumeTrue(hasArm64Frpc())
         Fixture(reply = false).use { silent ->
             silent.start()
             withRunner { runner, directory ->
@@ -131,7 +130,7 @@ class StunProbeIntegrationTest {
 
     @Test
     fun deadlineTerminatesProbeAndCleansItsConfig() {
-        assumeTrue(Build.SUPPORTED_ABIS.contains("arm64-v8a"))
+        assumeTrue(hasArm64Frpc())
         Fixture(reply = false).use { silent ->
             silent.start()
             withRunner(timeoutMillis = 400) { runner, directory ->
@@ -148,7 +147,7 @@ class StunProbeIntegrationTest {
 
     @Test
     fun cancellingActiveProbeRejectsConcurrentWorkAndReclaimsProcess() {
-        assumeTrue(Build.SUPPORTED_ABIS.contains("arm64-v8a"))
+        assumeTrue(hasArm64Frpc())
         Fixture(reply = false).use { silent ->
             silent.start()
             withRunner { runner, directory ->

@@ -53,13 +53,15 @@ if (( binary_status != 0 )); then
   vulnerability_ids="$(
     grep -Eo 'GO-[0-9]{4}-[0-9]+' "$binary_report" | sort -u | paste -sd, -
   )"
-  if [[ "$binary_status" == "3" && "$vulnerability_ids" == "GO-2026-5932" ]] &&
-    ! (
+  if [[ "$binary_status" == "3" && "$vulnerability_ids" == "GO-2026-5932" ]]; then
+    (
       cd "$source_dir"
       CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
-        go list -deps -tags 'frpc,noweb' ./cmd/frpc |
-        grep -Fxq 'golang.org/x/crypto/openpgp'
-    ); then
+        go list -deps -tags 'frpc,noweb' ./cmd/frpc
+    ) > "$work_dir/frpc-dependencies.txt"
+    if grep -Fxq 'golang.org/x/crypto/openpgp' "$work_dir/frpc-dependencies.txt"; then
+      exit "$binary_status"
+    fi
     printf '%s\n' \
       'Binary-only GO-2026-5932 match accepted: the exact Android source dependency graph does not include openpgp.'
   else
