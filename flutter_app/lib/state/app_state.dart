@@ -77,7 +77,6 @@ class AppState extends ChangeNotifier {
   List<FrpConfig> configs = [];
   List<ServerConfig> servers = [];
   String _selectedServerId = '';
-  String _stunServer = 'stun.easyvoip.com:3478';
   bool hideFromRecents = false;
 
   /// 首次启动待弹出的省电策略提醒
@@ -186,7 +185,6 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       // Temporary-file cleanup must never block encrypted config loading.
     }
-    unawaited(_stunSelector?.prepare());
     hideFromRecents = await _store.loadHideFromRecents();
     if (hideFromRecents) {
       try {
@@ -495,13 +493,18 @@ class AppState extends ChangeNotifier {
         );
       }
       if (generation != _lifecycleGeneration || !_runRequested) return;
+      await engine.requestTunnelPermissions();
+      if (_disposed || generation != _lifecycleGeneration || !_runRequested) {
+        return;
+      }
       var socks5Plan = Socks5RuntimePlan.build(
         _runtimeConfigsFor(runtimeServer),
       );
-      var config = buildFullTomlFor(runtimeServer, socks5Plan: socks5Plan);
+      final needsStun = socks5Plan.needsStun;
+      String? stunServer = needsStun ? toml.defaultStunServer : null;
       // STCP/relay-only configurations need no NAT discovery. Scan before
       // starting P2P, and recheck user intent after the asynchronous probes.
-      if (_stunSelector != null && _requiresStun(config)) {
+      if (_stunSelector != null && needsStun) {
         serverStatus = const ConnectionStatus(
           ConnectionType.unknown,
           'Checking STUN addresses...',
@@ -511,10 +514,15 @@ class AppState extends ChangeNotifier {
         if (_disposed || generation != _lifecycleGeneration || !_runRequested) {
           return;
         }
-        _stunServer = _stunSelector.takeNextEndpoint();
+        stunServer = _stunSelector.takeNextEndpoint();
         socks5Plan = Socks5RuntimePlan.build(_runtimeConfigsFor(runtimeServer));
-        config = buildFullTomlFor(runtimeServer, socks5Plan: socks5Plan);
       }
+      final config = toml.generateServerPreview(
+        runtimeServer,
+        _runtimeConfigsFor(runtimeServer),
+        socks5Plan: socks5Plan,
+        stunServer: stunServer,
+      );
       socks5Plan.requirePayloadFits(config);
       final ok = await engine.start(
         config,
@@ -788,11 +796,6 @@ class AppState extends ChangeNotifier {
     );
   });
 
-  static bool _requiresStun(String config) => RegExp(
-    r'''^\s*(?:type|"type"|'type')\s*=\s*["']{1,3}\s*(?:xtcp|xudp)\s*["']{1,3}\s*(?:#.*)?$''',
-    multiLine: true,
-  ).hasMatch(config);
-
   @visibleForTesting
   static String formatStunEndpoint(InternetAddress address, {int port = 3478}) {
     final host = address.type == InternetAddressType.IPv6
@@ -812,12 +815,13 @@ class AppState extends ChangeNotifier {
 
   String buildFullTomlFor(ServerConfig s, {Socks5RuntimePlan? socks5Plan}) {
     final apps = _runtimeConfigsFor(s);
-    return toml
-        .generateServerPreview(s, apps, socks5Plan: socks5Plan)
-        .replaceAll(
-          'natHoleStunServer = "stun.easyvoip.com:3478"',
-          'natHoleStunServer = "$_stunServer"',
-        );
+    final plan = socks5Plan ?? Socks5RuntimePlan.build(apps);
+    return toml.generateServerPreview(
+      s,
+      apps,
+      socks5Plan: plan,
+      stunServer: plan.needsStun ? toml.defaultStunServer : null,
+    );
   }
 
   Map<String, String> buildAllServerTomls() => {
@@ -848,10 +852,10 @@ class AppState extends ChangeNotifier {
     var importedConfigs = data.configs
         .map((config) {
           final allowIncomplete = data.version == 1;
-          final error = ConfigValidator.validate(
+          final error = ConfigValidator.validateStored(
             config,
-            allowMissingSecrets: data.redacted,
-            allowIncompleteLegacy: allowIncomplete,
+            redacted: data.redacted,
+            legacy: allowIncomplete,
           );
           if (error != null) throw FormatException(error);
           var serverId = config.serverId;
@@ -888,6 +892,7 @@ class AppState extends ChangeNotifier {
       }
     }
 
+    _validateRuntimeConfigs(nextServers, nextSelectedServerId, importedConfigs);
     final runtimeTicket = await _pauseRuntimeForMutation(true);
     try {
       // Claim the runtime mutation before certificate inventory I/O. A Start
@@ -1232,28 +1237,52 @@ class AppState extends ChangeNotifier {
   bool _isRuntimeConfig(FrpConfig config) =>
       config.serverId.isEmpty || config.serverId == _selectedServerId;
 
-  bool _belongsToServer(FrpConfig config, ServerConfig server) =>
+  bool _belongsToServer(
+    FrpConfig config,
+    ServerConfig server, [
+    String? selected,
+  ]) =>
       config.serverId == server.serverId ||
-      (config.serverId.isEmpty && server.serverId == _selectedServerId);
+      (config.serverId.isEmpty &&
+          server.serverId == (selected ?? _selectedServerId));
+
+  void _validateRuntimeConfigs(
+    List<ServerConfig> nextServers,
+    String selectedServerId,
+    List<FrpConfig> nextConfigs,
+  ) {
+    // Validate listener ownership before stopping a working configuration or
+    // committing a change which could not restart. Server instances run one
+    // at a time, so their local port namespaces are independent.
+    for (final server in nextServers) {
+      final apps = nextConfigs
+          .where(
+            (config) =>
+                config.enabled &&
+                _belongsToServer(config, server, selectedServerId),
+          )
+          .toList(growable: false);
+      for (final config in apps) {
+        final error = ConfigValidator.validate(config);
+        if (error != null) throw FormatException(error);
+      }
+      final plan = Socks5RuntimePlan.build(apps);
+      plan.requirePayloadFits(
+        toml.generateServerPreview(
+          server,
+          apps,
+          socks5Plan: plan,
+          stunServer: plan.needsStun ? toml.defaultStunServer : null,
+        ),
+      );
+    }
+  }
 
   Future<void> _persistConfigs(
     List<FrpConfig> nextConfigs, {
     required bool restartRuntime,
   }) async {
-    // Validate listener ownership before stopping a working configuration or
-    // committing a change which could not restart. Server instances run one
-    // at a time, so their local port namespaces are independent.
-    for (final server in servers) {
-      final apps = nextConfigs
-          .where((config) => config.enabled && _belongsToServer(config, server))
-          .toList(growable: false);
-      final plan = Socks5RuntimePlan.build(apps);
-      if (plan.forwards.isNotEmpty) {
-        plan.requirePayloadFits(
-          toml.generateServerPreview(server, apps, socks5Plan: plan),
-        );
-      }
-    }
+    _validateRuntimeConfigs(servers, _selectedServerId, nextConfigs);
     final runtimeTicket = await _pauseRuntimeForMutation(restartRuntime);
     try {
       await _persistAndCommit(_configuration(configs: nextConfigs));
@@ -1299,55 +1328,61 @@ class AppState extends ChangeNotifier {
     );
   });
 
-  Future<void> setSocks5ForConfig(
-    int configId,
-    Socks5Config? value,
-  ) => _serializeMutation(() async {
-    await _ensureInitialized();
-    final selected = configs
-        .where((config) => config.id == configId)
-        .firstOrNull;
-    if (selected == null) throw StateError('Configuration no longer exists');
-    final members = selected.groupId > 0
-        ? configs.where((config) => config.groupId == selected.groupId).toList()
-        : [selected];
-    final visitors = Socks5RuntimePlan.supportedVisitors(members).toList();
-    if (visitors.isEmpty) {
-      throw const FormatException(
-        'SOCKS5 requires a form-based visitor configuration',
-      );
-    }
-    if (value != null) {
-      final error = value.validationError();
-      if (error != null) throw FormatException(error);
-      final hasTcp = visitors.any(
-        (config) => config.protocol == 'stcp' || config.protocol == 'xtcp',
-      );
-      final hasUdp = visitors.any(
-        (config) => config.protocol == 'sudp' || config.protocol == 'xudp',
-      );
-      if ((!hasTcp && value.allTcpPorts.isNotEmpty) ||
-          (!hasUdp && value.allUdpPorts.isNotEmpty)) {
-        throw const FormatException(
-          'Add a visitor for the selected SOCKS5 protocol first',
+  Future<void> setSocks5ForConfig(int configId, Socks5Config? value) =>
+      _serializeMutation(() async {
+        await _ensureInitialized();
+        final selected = configs
+            .where((config) => config.id == configId)
+            .firstOrNull;
+        if (selected == null) {
+          throw StateError('Configuration no longer exists');
+        }
+        final members = selected.groupId > 0
+            ? configs
+                  .where(
+                    (config) =>
+                        config.groupId == selected.groupId &&
+                        config.serverId == selected.serverId,
+                  )
+                  .toList()
+            : [selected];
+        final visitors = Socks5RuntimePlan.supportedVisitors(members).toList();
+        if (visitors.isEmpty) {
+          throw const FormatException(
+            'SOCKS5 requires a form-based visitor configuration',
+          );
+        }
+        if (value != null) {
+          final error = value.validationError();
+          if (error != null) throw FormatException(error);
+          final hasTcp = visitors.any(
+            (config) => config.protocol == 'stcp' || config.protocol == 'xtcp',
+          );
+          final hasUdp = visitors.any(
+            (config) => config.protocol == 'sudp' || config.protocol == 'xudp',
+          );
+          if ((!hasTcp && value.allTcpPorts.isNotEmpty) ||
+              (!hasUdp && value.allUdpPorts.isNotEmpty)) {
+            throw const FormatException(
+              'Add a visitor for the selected SOCKS5 protocol first',
+            );
+          }
+        }
+        final ids = visitors.map((config) => config.id).toSet();
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final nextConfigs = configs
+            .map((config) {
+              if (!ids.contains(config.id)) return config;
+              final updated = config.copyWith(socks5: value, updatedAt: now);
+              _requireValidConfig(updated);
+              return updated;
+            })
+            .toList(growable: false);
+        await _persistConfigs(
+          nextConfigs,
+          restartRuntime: visitors.any(_isRuntimeConfig),
         );
-      }
-    }
-    final ids = visitors.map((config) => config.id).toSet();
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final nextConfigs = configs
-        .map((config) {
-          if (!ids.contains(config.id)) return config;
-          final updated = config.copyWith(socks5: value, updatedAt: now);
-          _requireValidConfig(updated);
-          return updated;
-        })
-        .toList(growable: false);
-    await _persistConfigs(
-      nextConfigs,
-      restartRuntime: visitors.any(_isRuntimeConfig),
-    );
-  });
+      });
 
   /// Atomically replaces a logical set of form configurations.
   ///
@@ -1401,10 +1436,15 @@ class AppState extends ChangeNotifier {
         .toList();
     if (insertAt < 0 || insertAt > retained.length) insertAt = retained.length;
     retained.insertAll(insertAt, prepared);
+    final originalServers = existingById.values
+        .map((config) => config.serverId)
+        .toSet();
     if (renameGroupId > 0 && renameGroupName != null) {
       retained = retained
           .map(
-            (config) => config.groupId == renameGroupId
+            (config) =>
+                config.groupId == renameGroupId &&
+                    originalServers.contains(config.serverId)
                 ? config.copyWith(groupName: renameGroupName)
                 : config,
           )
@@ -1438,37 +1478,72 @@ class AppState extends ChangeNotifier {
         await _persistConfigs(nextConfigs, restartRuntime: restartRuntime);
       });
 
-  Future<void> setGroupEnabled(int groupId, bool enabled) =>
+  String _groupOwner(int groupId, String? serverId) {
+    if (serverId != null) return serverId;
+    final owners = configs
+        .where((config) => config.groupId == groupId)
+        .map((config) => config.serverId)
+        .toSet();
+    if (owners.length > 1) {
+      throw StateError('Specify the server that owns this group');
+    }
+    return owners.firstOrNull ?? '';
+  }
+
+  Future<void> setGroupEnabled(int groupId, bool enabled, {String? serverId}) =>
       _serializeMutation(() async {
         await _ensureInitialized();
+        final owner = _groupOwner(groupId, serverId);
         final restartRuntime = configs.any(
-          (config) => config.groupId == groupId && _isRuntimeConfig(config),
+          (config) =>
+              config.groupId == groupId &&
+              config.serverId == owner &&
+              _isRuntimeConfig(config),
         );
         final nextConfigs = configs
-            .map((e) => e.groupId == groupId ? e.copyWith(enabled: enabled) : e)
+            .map(
+              (e) => e.groupId == groupId && e.serverId == owner
+                  ? e.copyWith(enabled: enabled)
+                  : e,
+            )
             .toList();
         await _persistConfigs(nextConfigs, restartRuntime: restartRuntime);
       });
 
-  Future<void> deleteGroup(int groupId) => _serializeMutation(() async {
-    await _ensureInitialized();
-    final removed = configs.where((config) => config.groupId == groupId);
-    await _persistConfigs(
-      configs
-          .where((config) => config.groupId != groupId)
-          .toList(growable: false),
-      restartRuntime: removed.any(_isRuntimeConfig),
-    );
-  });
-
-  Future<void> renameGroup(int groupId, String name) =>
+  Future<void> deleteGroup(int groupId, {String? serverId}) =>
       _serializeMutation(() async {
         await _ensureInitialized();
+        final owner = _groupOwner(groupId, serverId);
+        final removed = configs.where(
+          (config) => config.groupId == groupId && config.serverId == owner,
+        );
+        await _persistConfigs(
+          configs
+              .where(
+                (config) =>
+                    config.groupId != groupId || config.serverId != owner,
+              )
+              .toList(growable: false),
+          restartRuntime: removed.any(_isRuntimeConfig),
+        );
+      });
+
+  Future<void> renameGroup(int groupId, String name, {String? serverId}) =>
+      _serializeMutation(() async {
+        await _ensureInitialized();
+        final owner = _groupOwner(groupId, serverId);
         final restartRuntime = configs.any(
-          (config) => config.groupId == groupId && _isRuntimeConfig(config),
+          (config) =>
+              config.groupId == groupId &&
+              config.serverId == owner &&
+              _isRuntimeConfig(config),
         );
         final nextConfigs = configs
-            .map((e) => e.groupId == groupId ? e.copyWith(groupName: name) : e)
+            .map(
+              (e) => e.groupId == groupId && e.serverId == owner
+                  ? e.copyWith(groupName: name)
+                  : e,
+            )
             .toList();
         await _persistConfigs(nextConfigs, restartRuntime: restartRuntime);
       });
@@ -1485,6 +1560,7 @@ class AppState extends ChangeNotifier {
             .where(
               (config) =>
                   config.groupId == primary.groupId &&
+                  config.serverId == primary.serverId &&
                   config.protocol == fallbackProtocol &&
                   config.name == primary.fallbackTo,
             )

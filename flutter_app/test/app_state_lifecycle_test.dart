@@ -86,6 +86,55 @@ void main() {
   });
 
   test(
+    'stop while Android asks for tunnel permissions cancels the pending start',
+    () async {
+      SharedPreferences.setMockInitialValues(const {
+        'battery_hint_shown': true,
+      });
+      final asked = Completer<void>();
+      final answered = Completer<void>();
+      var starts = 0;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(secureStoreChannel, (call) async {
+        return (call.arguments as Map<Object?, Object?>)['value'] as String?;
+      });
+      messenger.setMockMethodCallHandler(engineChannel, (call) async {
+        switch (call.method) {
+          case 'requestTunnelPermissions':
+            asked.complete();
+            await answered.future;
+            return null;
+          case 'start':
+            starts++;
+            return true;
+          case 'stop':
+            return true;
+          default:
+            return null;
+        }
+      });
+      final state = AppState()..pausePolling();
+      addTearDown(() {
+        state.dispose();
+        messenger.setMockMethodCallHandler(engineChannel, null);
+        messenger.setMockMethodCallHandler(secureStoreChannel, null);
+      });
+      await state.ready;
+      state.servers = const [
+        ServerConfig(serverId: 'SERVER01', serverAddr: 'frps.example.com'),
+      ];
+      final pending = state.start();
+      await asked.future;
+      await state.stop();
+      answered.complete();
+      await pending;
+      expect(starts, 0);
+      expect(state.runRequested, isFalse);
+    },
+  );
+
+  test(
     'start claims intent before initialization await so later stop wins',
     () async {
       SharedPreferences.setMockInitialValues(const {

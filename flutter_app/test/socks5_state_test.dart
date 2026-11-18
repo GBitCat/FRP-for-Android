@@ -180,6 +180,113 @@ void main() {
     expect(state.configs[1].socks5, isNull);
   });
 
+  test(
+    'invalid full import leaves the previous configuration running',
+    () async {
+      final old = _visitor(9, 'stcp', 12080, group: 9);
+      await state.applyImport(ExportData(servers: [_server], configs: [old]));
+      await state.start();
+      calls.clear();
+      final settings = _settings.copyWith(udpPorts: []);
+      final conflicting = [
+        _visitor(1, 'stcp', 11080).copyWith(socks5: settings),
+        _visitor(2, 'stcp', 11081, group: 2).copyWith(socks5: settings),
+      ];
+      final bytes = ConfigImportExport.buildExportZip(
+        conflicting,
+        [_server],
+        _server.serverId,
+        const {'SERVER01': ''},
+        includeSecrets: true,
+      );
+      final data = ConfigImportExport.parseImportBytes(bytes);
+      expect(data, isNotNull);
+      await expectLater(state.applyImport(data), throwsFormatException);
+      expect(calls.where((c) => c.method == 'stop'), isEmpty);
+      expect(state.running, isTrue);
+      expect(state.configs.single.id, 9);
+      expect(
+        (await ConfigStore().loadConfigurationSnapshot())!.configs.single.id,
+        9,
+      );
+    },
+  );
+
+  test(
+    'full backup restores incomplete disabled visitors after redacted import',
+    () async {
+      final bytes = ConfigImportExport.buildExportZip(
+        [_visitor(1, 'stcp', 11080)],
+        [_server],
+        _server.serverId,
+        const {},
+      );
+      expect(
+        await state.applyImport(ConfigImportExport.parseImportBytes(bytes)),
+        1,
+      );
+      final full = ConfigImportExport.buildExportZip(
+        state.configs,
+        state.servers,
+        state.selectedServerId,
+        state.buildAllServerTomls(),
+        includeSecrets: true,
+      );
+      final data = ConfigImportExport.parseImportBytes(full);
+      expect(data, isNotNull);
+      expect(await state.applyImport(data), 1);
+      expect(state.configs.single.enabled, isFalse);
+      expect(state.configs.single.secretKey ?? '', isEmpty);
+      await state.start();
+      calls.clear();
+      await expectLater(state.setConfigEnabled(1, true), throwsFormatException);
+      expect(calls.where((call) => call.method == 'stop'), isEmpty);
+    },
+  );
+
+  test('invalid and oversized manual-only imports preserve the running configuration', () async {
+    final old = _visitor(9, 'stcp', 12080);
+    await state.applyImport(ExportData(servers: [_server], configs: [old]));
+    await state.start();
+    calls.clear();
+    for (final source in [
+      "[[visitors]]\nname = 'unterminated",
+      "[[visitors]]\nname = 'manual'\ntype = 'stcp'\n#${'x' * (512 * 1024)}",
+    ]) {
+      final data = ExportData(
+        servers: [_server],
+        configs: [_visitor(1, 'stcp', 11080).copyWith(manualToml: source)],
+      );
+      await expectLater(state.applyImport(data), throwsFormatException);
+      expect(calls.where((call) => call.method == 'stop'), isEmpty);
+      expect(state.configs.single.id, old.id);
+      expect(
+        (await ConfigStore().loadConfigurationSnapshot())!.configs.single.id,
+        old.id,
+      );
+    }
+  });
+
+  test('equal group IDs on different servers retain separate settings and controls', () async {
+    const second = ServerConfig(serverId: 'SERVER02', serverAddr: '127.0.0.1');
+    await state.applyImport(
+      ExportData(
+        servers: [_server, second],
+        configs: [
+          _visitor(1, 'stcp', 11080),
+          _visitor(2, 'stcp', 11080).copyWith(serverId: second.serverId),
+        ],
+      ),
+    );
+    expect(state.buildGroups().map((g) => g.members.length), [1, 1]);
+    await state.setSocks5ForConfig(1, _settings.copyWith(udpPorts: []));
+    expect(state.configs.last.socks5, isNull);
+    await state.setGroupEnabled(1, false, serverId: second.serverId);
+    expect(state.configs.first.enabled, isTrue);
+    await state.deleteGroup(1, serverId: second.serverId);
+    expect(state.configs.single.id, 1);
+  });
+
   test('backup preserves SOCKS credentials only when secrets are included', () {
     final configs = [
       _visitor(

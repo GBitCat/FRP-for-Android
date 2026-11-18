@@ -6,6 +6,7 @@ import '../models/server_config.dart';
 import '../models/socks5_config.dart';
 import 'config_validator.dart';
 import 'limited_zip_reader.dart';
+import 'toml_redaction.dart';
 import 'wipeable_zip_builder.dart';
 
 /// 导出数据：Server 配置 + 应用配置列表（与原有 ExportData 格式一致）
@@ -93,10 +94,10 @@ class ExportData {
           'Modern backups require unique positive proxy IDs',
         );
       }
-      final error = ConfigValidator.validate(
+      final error = ConfigValidator.validateStored(
         config,
-        allowMissingSecrets: redacted,
-        allowIncompleteLegacy: version == 1,
+        redacted: redacted,
+        legacy: version == 1,
       );
       if (error != null) throw FormatException(error);
       if (config.serverId.isNotEmpty && !serverIds.contains(config.serverId)) {
@@ -127,24 +128,15 @@ class ConfigImportExport {
   /// credential assignments. Comments are omitted because free-form comment
   /// text cannot be reliably classified as non-sensitive.
   static String _redactManualToml(String toml) {
-    final redacted = <String>[];
-
     for (final line in toml.split('\n')) {
       final trimmed = line.trimLeft();
-      if (trimmed.isEmpty) {
-        redacted.add(line);
-        continue;
-      }
+      if (trimmed.isEmpty) continue;
       if (trimmed.startsWith('#')) {
         continue;
       }
 
-      // The sanitizer is intentionally line-oriented. Once TOML enters a
-      // multiline string, later lines which look like comments or credential
-      // assignments are string contents, not syntax. Without a cross-line
-      // parser we cannot safely preserve them, so reject every multiline form
-      // instead of silently corrupting a supposedly structure-preserving
-      // export.
+      // Keep the portable redacted format's existing restrictions. The shared
+      // TOML redactor below parses accepted documents and strips comments.
       if (_containsTomlMultilineDelimiter(line)) {
         throw StateError(
           'Redacted export cannot safely process multiline TOML strings. '
@@ -152,137 +144,15 @@ class ConfigImportExport {
         );
       }
 
-      // TOML inline tables may contain nested credential assignments whose
-      // keys are not visible to this line-oriented sanitizer (for example,
-      // `auth = { token = "..." }`). Fail closed instead of producing an
-      // archive labelled redacted while retaining those values. The user can
-      // expand the table to normal dotted assignments or use encrypted export.
-      if (_containsUnquotedInlineTableSyntax(line)) {
-        throw StateError(
-          'Redacted export cannot safely process inline TOML tables. '
-          'Expand them to separate assignments or use encrypted export.',
-        );
-      }
-
       final separator = _findTomlAssignmentSeparator(line);
       if (separator > 0 && line.substring(0, separator).contains(r'\')) {
-        // Basic quoted TOML keys can spell credential names with Unicode
-        // escapes (for example `"to\u006ben"`). A line-oriented redactor must
-        // not guess at every TOML escape sequence.
         throw StateError(
           'Redacted export cannot safely process escaped TOML keys. '
           'Use a plain key or encrypted export.',
         );
       }
-      if (separator <= 0 ||
-          !_isSensitiveTomlKey(line.substring(0, separator))) {
-        redacted.add(_stripInlineTomlComment(line));
-        continue;
-      }
-
-      final value = line.substring(separator + 1).trimLeft();
-      final multilineDelimiter = value.startsWith('"""')
-          ? '"""'
-          : value.startsWith("'''")
-          ? "'''"
-          : null;
-      if (multilineDelimiter != null || value.startsWith('[')) {
-        // Correctly finding the end of every multiline TOML string/array
-        // requires a complete parser (escaped quote runs are especially easy
-        // to misclassify). Do not risk copying continuation lines from a
-        // sensitive value into a redacted archive.
-        throw StateError(
-          'Redacted export cannot safely process multiline or structured '
-          'credential values. Use a single-line value or encrypted export.',
-        );
-      }
-
-      redacted.add(
-        '${line.substring(0, separator + 1)} "" # Redacted credential; re-enter after import.',
-      );
     }
-
-    return redacted.join('\n');
-  }
-
-  static String _stripInlineTomlComment(String line) {
-    var inBasicString = false;
-    var inLiteralString = false;
-    var escaped = false;
-    for (var i = 0; i < line.length; i++) {
-      final character = line[i];
-      if (inBasicString) {
-        if (escaped) {
-          escaped = false;
-        } else if (character == '\\') {
-          escaped = true;
-        } else if (character == '"') {
-          inBasicString = false;
-        }
-      } else if (inLiteralString) {
-        if (character == "'") inLiteralString = false;
-      } else if (character == '"') {
-        inBasicString = true;
-      } else if (character == "'") {
-        inLiteralString = true;
-      } else if (character == '#') {
-        return line.substring(0, i).trimRight();
-      }
-    }
-    return line;
-  }
-
-  static bool _isSensitiveTomlKey(String rawKey) {
-    final key = rawKey.trim();
-    if (key.isEmpty || key.startsWith('[')) return false;
-
-    // Normalize the entire TOML key rather than splitting on every dot. A dot
-    // inside a quoted key is literal, so naive splitting lets
-    // `"auth.token" = "..."` evade redaction. Looking at the whole key also
-    // remains deliberately conservative for dotted credential assignments.
-    final normalized = key.replaceAll(RegExp('[^A-Za-z0-9]'), '').toLowerCase();
-
-    return normalized.endsWith('sk') ||
-        normalized == 'token' ||
-        normalized.endsWith('token') ||
-        normalized.contains('secret') ||
-        normalized.contains('password') ||
-        normalized.contains('passwd') ||
-        normalized.contains('credential') ||
-        normalized.endsWith('authorization') ||
-        normalized.endsWith('cookie') ||
-        normalized.contains('apikey') ||
-        normalized.contains('privatekey') ||
-        normalized.contains('accesskey');
-  }
-
-  static bool _containsUnquotedInlineTableSyntax(String line) {
-    var inBasicString = false;
-    var inLiteralString = false;
-    var escaped = false;
-    for (var i = 0; i < line.length; i++) {
-      final character = line[i];
-      if (inBasicString) {
-        if (escaped) {
-          escaped = false;
-        } else if (character == '\\') {
-          escaped = true;
-        } else if (character == '"') {
-          inBasicString = false;
-        }
-      } else if (inLiteralString) {
-        if (character == "'") inLiteralString = false;
-      } else if (character == '"') {
-        inBasicString = true;
-      } else if (character == "'") {
-        inLiteralString = true;
-      } else if (character == '#') {
-        return false;
-      } else if (character == '{' || character == '}') {
-        return true;
-      }
-    }
-    return false;
+    return redactConfigurationToml(toml, forExport: true);
   }
 
   static bool _containsTomlMultilineDelimiter(String line) {
@@ -471,11 +341,7 @@ class ConfigImportExport {
           'Every proxy must have a unique positive configuration ID',
         );
       }
-      final error = ConfigValidator.validate(
-        config,
-        allowMissingSecrets: !config.enabled,
-        allowIncompleteLegacy: !config.enabled,
-      );
+      final error = ConfigValidator.validateStored(config);
       if (error != null ||
           (config.serverId.isNotEmpty &&
               !serverIds.contains(config.serverId))) {

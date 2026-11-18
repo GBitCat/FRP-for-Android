@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/frp_config.dart';
 import '../state/app_state.dart';
+import '../services/manual_frp_config.dart';
 import '../widgets/app_dropdown_field.dart';
 import '../widgets/editor_card.dart';
 
@@ -101,62 +102,35 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     super.dispose();
   }
 
-  String _deriveName() {
-    // 分组命名优先
-    if (_groupName.trim().isNotEmpty) return _groupName.trim();
-    // 从 TOML 提取实际 name（跳过注释行，避免模板里的 name 被误用）
-    for (final line in _toml.split('\n')) {
-      if (line.trimLeft().startsWith('#')) continue;
-      final m = RegExp(r'^\s*name\s*=\s*"([^"]+)"').firstMatch(line);
-      if (m != null && m.group(1)!.isNotEmpty) return m.group(1)!;
-    }
-    return 'manual-${DateTime.now().millisecondsSinceEpoch % 100000}';
-  }
-
-  /// 为每个 visitors/proxies 块上方添加 # Config: "分组名" (type) 注释（幂等）
-  String _addConfigComments(String toml) {
-    final lines = toml.split('\n');
-    final groupLabel = _groupName.trim().isEmpty
-        ? _deriveName()
-        : _groupName.trim();
-    final out = <String>[];
-    for (var i = 0; i < lines.length; i++) {
-      final line = lines[i];
-      final t = line.trimLeft();
-      if (t.startsWith('[[visitors]]') || t.startsWith('[[proxies]]')) {
-        // 已有注释则不重复添加
-        final already =
-            out.isNotEmpty && out.last.trimLeft().startsWith('# Config:');
-        if (!already) {
-          // 查找本块的 type
-          var type = 'unknown';
-          for (var j = i + 1; j < lines.length; j++) {
-            final tj = lines[j].trimLeft();
-            if (tj.startsWith('[[')) break;
-            if (tj.startsWith('#')) continue;
-            final m = RegExp(r'''^\s*type\s*=\s*"([^"]+)"''')
-                .firstMatch(lines[j]);
-            if (m != null && m.group(1)!.isNotEmpty) {
-              type = m.group(1)!.toLowerCase();
-              break;
-            }
-          }
-          out.add('# Config: $groupLabel ($type)');
+  String _addConfigComments(
+    String source,
+    String name,
+    List<ManualFrpBlock> blocks,
+  ) {
+    // Preserve arbitrary multiline strings verbatim (they may contain lines
+    // identical to table headers). The server preview adds a document label.
+    if (source.contains("'''") || source.contains('"""')) return source;
+    final sections = {
+      for (final section in ['proxies', 'visitors'])
+        section: blocks.where((block) => block.section == section).iterator,
+    };
+    final header = RegExp(
+      r'''^\s*\[\[\s*(?:"(proxies|visitors)"|'(proxies|visitors)'|(proxies|visitors))\s*\]\]\s*(?:#.*)?$''',
+    );
+    final lines = <String>[];
+    for (final line in source.split('\n')) {
+      final match = header.firstMatch(line);
+      if (match != null) {
+        final iterator = sections[match[1] ?? match[2] ?? match[3]]!;
+        if (iterator.moveNext() &&
+            !(lines.lastOrNull?.trimLeft().startsWith('# Config:') ?? false)) {
+          final type = iterator.current.values['type'] ?? 'unknown';
+          lines.add('# Config: $name ($type)');
         }
       }
-      out.add(line);
+      lines.add(line);
     }
-    return out.join('\n');
-  }
-
-  /// 识别未被注释的 type = "..."（如 xtcp / stcp / tcp）
-  String _detectType() {
-    for (final line in _toml.split('\n')) {
-      if (line.trimLeft().startsWith('#')) continue;
-      final m = RegExp(r'''^\s*type\s*=\s*"([^"]+)"''').firstMatch(line);
-      if (m != null && m.group(1)!.isNotEmpty) return m.group(1)!.toLowerCase();
-    }
-    return 'manual';
+    return lines.join('\n');
   }
 
   Future<void> _save() async {
@@ -169,12 +143,16 @@ class _ManualConfigEditScreenState extends State<ManualConfigEditScreen> {
     }
     final state = appState;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final name = _deriveName();
-    final type = _detectType();
-    final finalToml = _addConfigComments(_toml);
     setState(() => _saving = true);
     var saved = false;
     try {
+      final blocks = manualFrpBlocks(_toml);
+      final primary = blocks.firstOrNull?.values;
+      final name = _groupName.trim().isNotEmpty
+          ? _groupName.trim()
+          : primary?['name'] as String? ?? 'manual-${now % 100000}';
+      final type = (primary?['type'] as String?)?.toLowerCase() ?? 'manual';
+      final finalToml = _addConfigComments(_toml, name, blocks);
       final FrpConfig candidate;
       if (_isEditing && _original != null) {
         candidate = _original!.copyWith(

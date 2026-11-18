@@ -17,7 +17,7 @@ concurrency:
 jobs:
   quality-and-release-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 65
     defaults:
       run:
         working-directory: flutter_app
@@ -40,11 +40,11 @@ jobs:
       - name: Set up Flutter
         uses: ./.github/actions/setup-flutter
 
-      - name: Install pinned Android NDK
+      - name: Install Android SDK and pinned NDK
         working-directory: .
         run: >-
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          --install "ndk;28.2.13676358"
+          --install "cmdline-tools;22.0" "platforms;android-37.0" "build-tools;37.0.0" "ndk;28.2.13676358"
 
       - name: Check tracked sensitive filenames
         working-directory: .
@@ -107,146 +107,23 @@ jobs:
       - name: Compile Android integration tests
         run: >-
           ./android/gradlew -p android app:assembleDebug app:assembleDebugAndroidTest
-          -Pfrp.integrationTestAbi=x86_64 --no-daemon
+          -Pfrp.integrationTestAbi=x86_64 -Ptarget-platform=android-x64 --no-daemon
 
-      - name: Install Android API 35 emulator
+      - name: Test the release signer guard with a disposable certificate
         working-directory: .
-        run: |
-          set -Eeuo pipefail
-          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
-          export ANDROID_AVD_HOME="$RUNNER_TEMP/frp-avd"
-          mkdir -p "$ANDROID_AVD_HOME"
-          "$sdkmanager" --install \
-            "emulator" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "system-images;android-35;google_apis;x86_64"
-          printf 'no\n' | "$avdmanager" create avd \
-            --force \
-            --name frp-ci-api35 \
-            --package "system-images;android-35;google_apis;x86_64" \
-            --device pixel_5
-          test -f "$ANDROID_AVD_HOME/frp-ci-api35.ini"
-          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fxq frp-ci-api35
+        run: ./scripts/test_release_signer_guard.sh
 
-      - name: Run Android integration tests on API 35
-        working-directory: .
-        timeout-minutes: 20
-        env:
-          ANDROID_SERIAL: emulator-5554
-        run: |
-          set -Eeuo pipefail
-          adb="$ANDROID_HOME/platform-tools/adb"
-          export ANDROID_AVD_HOME="$RUNNER_TEMP/frp-avd"
-          test -f "$ANDROID_AVD_HOME/frp-ci-api35.ini"
-          if [[ -e /dev/kvm ]]; then
-            sudo chmod 0666 /dev/kvm
-          fi
+      - name: Run Android 15 integration tests
+        timeout-minutes: 25
+        uses: ./.github/actions/test-android-emulator
+        with:
+          platform: '35'
 
-          "$adb" start-server
-          emulator_log="$RUNNER_TEMP/frp-api35-emulator.log"
-          "$ANDROID_HOME/emulator/emulator" \
-            -avd frp-ci-api35 \
-            -port 5554 \
-            -no-snapshot-load \
-            -no-snapshot-save \
-            -no-window \
-            -gpu swiftshader_indirect \
-            -noaudio \
-            -no-boot-anim \
-            -camera-back none \
-            -camera-front none \
-            >"$emulator_log" 2>&1 &
-          emulator_pid=$!
-
-          cleanup() {
-            rc=$?
-            trap - EXIT
-            set +e
-            if (( rc != 0 )); then
-              tail -n 200 "$emulator_log" || true
-            fi
-
-            # ADB or the emulator can occasionally stop responding after a
-            # successful instrumentation run. Keep teardown bounded so a
-            # cleanup hang cannot turn passing tests into a step timeout.
-            timeout --signal=TERM --kill-after=2s 8s \
-              "$adb" -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
-            kill "$emulator_pid" >/dev/null 2>&1 || true
-            for _ in $(seq 1 50); do
-              if ! kill -0 "$emulator_pid" 2>/dev/null; then
-                break
-              fi
-              sleep 0.2
-            done
-            if kill -0 "$emulator_pid" 2>/dev/null; then
-              kill -KILL "$emulator_pid" >/dev/null 2>&1 || true
-            fi
-            wait "$emulator_pid" 2>/dev/null || true
-            exit "$rc"
-          }
-          trap cleanup EXIT
-
-          device_connected=false
-          for _ in $(seq 1 60); do
-            device_state="$("$adb" -s "$ANDROID_SERIAL" get-state 2>/dev/null || true)"
-            if [[ "$device_state" == "device" ]]; then
-              device_connected=true
-              break
-            fi
-            if ! kill -0 "$emulator_pid" 2>/dev/null; then
-              printf '%s\n' 'Android emulator exited before connecting to adb.' >&2
-              exit 1
-            fi
-            sleep 2
-          done
-          if [[ "$device_connected" != true ]]; then
-            printf '%s\n' 'Timed out waiting for the Android emulator to connect to adb.' >&2
-            exit 1
-          fi
-
-          boot_completed=false
-          for _ in $(seq 1 120); do
-            if [[ "$("$adb" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
-              boot_completed=true
-              break
-            fi
-            if ! kill -0 "$emulator_pid" 2>/dev/null; then
-              printf '%s\n' 'Android emulator exited before completing boot.' >&2
-              exit 1
-            fi
-            sleep 2
-          done
-          if [[ "$boot_completed" != true ]]; then
-            printf '%s\n' 'Timed out waiting for the Android emulator to boot.' >&2
-            exit 1
-          fi
-
-          "$adb" -s "$ANDROID_SERIAL" shell settings put global window_animation_scale 0
-          "$adb" -s "$ANDROID_SERIAL" shell settings put global transition_animation_scale 0
-          "$adb" -s "$ANDROID_SERIAL" shell settings put global animator_duration_scale 0
-
-          app_apk="flutter_app/build/app/outputs/apk/debug/app-debug.apk"
-          test_apk="flutter_app/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
-          test -f "$app_apk"
-          test -f "$test_apk"
-          "$adb" -s "$ANDROID_SERIAL" install -r -t -g "$app_apk"
-          "$adb" -s "$ANDROID_SERIAL" install -r -t -g "$test_apk"
-
-          instrumentation_log="$RUNNER_TEMP/frp-instrumentation.txt"
-          set +e
-          "$adb" -s "$ANDROID_SERIAL" shell am instrument -w -r \
-            com.frp.frp_app.debug.test/androidx.test.runner.AndroidJUnitRunner \
-            | tee "$instrumentation_log"
-          instrumentation_rc=${PIPESTATUS[0]}
-          set -e
-          if (( instrumentation_rc != 0 )) || \
-              ! grep -Eq '^OK \(40 tests\)$' "$instrumentation_log"; then
-            printf 'Android instrumentation failed with adb status %d.\n' \
-              "$instrumentation_rc" >&2
-            exit 1
-          fi
+      - name: Run Android 17 integration tests
+        timeout-minutes: 25
+        uses: ./.github/actions/test-android-emulator
+        with:
+          platform: '37.0'
 
       - name: Build unsigned API 28+ Release APK
         env:

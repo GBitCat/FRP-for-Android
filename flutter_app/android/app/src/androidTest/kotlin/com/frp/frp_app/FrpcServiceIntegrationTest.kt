@@ -1,10 +1,15 @@
 package com.frp.frp_app
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.Looper
+import android.os.Parcel
+import android.os.SystemClock
+import android.util.Log
 import android.view.WindowManager
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -54,6 +59,126 @@ class FrpcServiceIntegrationTest {
     }
 
     @Test
+    fun queuedStartStopAndQueryCompleteInOrderOnTheMainThread() {
+        val done = CountDownLatch(3)
+        val replies = mutableListOf<Pair<String, Any?>>()
+        var callbacksOnMain = true
+        fun result(name: String) = object : MethodChannel.Result {
+            override fun success(value: Any?) {
+                callbacksOnMain = callbacksOnMain && Looper.myLooper() == Looper.getMainLooper()
+                replies += name to value
+                done.countDown()
+            }
+            override fun error(code: String, message: String?, details: Any?) = success(code)
+            override fun notImplemented() = success(null)
+        }
+        val caller = ContextWrapper(context)
+        val releaseStart = CountDownLatch(1)
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            FrpcService.submitRunCommand(caller, result("start")) { app ->
+                app === context.applicationContext && Looper.myLooper() != Looper.getMainLooper() &&
+                    releaseStart.await(3, TimeUnit.SECONDS) && FrpcService.start(app, configText())
+            }
+            FrpcService.submitRunCommand(caller, result("stop"), FrpcService::stop)
+            FrpcService.submitRunCommand(caller, result("query"), FrpcService::isRunRequested)
+        }
+        releaseStart.countDown()
+        assertTrue(done.await(8, TimeUnit.SECONDS))
+        assertTrue(callbacksOnMain)
+        assertEquals(listOf("start" to true, "stop" to true, "query" to false), replies)
+    }
+
+    @Test
+    fun maximumTomlFitsStartParcelAndReachesEmbeddedFrpc() {
+        val limit = 512 * 1024
+        val config = buildString(limit) {
+            appendLine(configText())
+            val comment = "#" + "p".repeat(126) + "\n"
+            repeat((limit - length) / comment.length) { append(comment) }
+            append(comment.take(limit - length))
+        }
+        val cursor = FrpcService.readLogBatch(Long.MAX_VALUE).first
+        var parcelBytes = 0
+        fun measure(intent: Intent) {
+            val parcel = Parcel.obtain()
+            try {
+                intent.writeToParcel(parcel, 0)
+                parcelBytes = parcel.dataSize()
+            } finally {
+                parcel.recycle()
+            }
+        }
+        val measuringContext = object : ContextWrapper(context) {
+            override fun startForegroundService(service: Intent): ComponentName? {
+                measure(service)
+                return super.startForegroundService(service)
+            }
+
+            override fun startService(service: Intent): ComponentName? {
+                measure(service)
+                return super.startService(service)
+            }
+        }
+        val beforeStart = SystemClock.elapsedRealtime()
+        assertTrue(FrpcService.start(measuringContext, config))
+        val startMs = SystemClock.elapsedRealtime() - beforeStart
+        assertTrue("start Intent was $parcelBytes bytes", parcelBytes in 1..1024)
+        Log.i("FrpcStartParcel", "configBytes=$limit intentBytes=$parcelBytes submitMs=$startMs")
+        assertTrue(waitUntil {
+            FrpcService.readLogBatch(cursor).second.any {
+                it.contains("try to connect to server") || it.contains("fixture read configuration")
+            }
+        })
+        val saved = context.getSharedPreferences("frp_state", Context.MODE_PRIVATE)
+            .getString("last_config_payload", null)
+        assertTrue(saved != null && SecureStringCodec.decrypt(saved) == config)
+        assertTrue(waitUntil { !FrpcService.runtimeConfigFile(context).exists() })
+    }
+
+    @Test
+    fun pendingLegacyStringIntentStillStartsWithItsOriginalConfig() {
+        val config = configText() + "\n# 旧版启动配置"
+        val id = UUID.randomUUID().toString()
+        val prefs = context.getSharedPreferences("frp_state", Context.MODE_PRIVATE)
+        val previous = SecureStringCodec.encrypt(configText() + "\n# old committed config")
+        assertTrue(prefs.edit().putBoolean("was_running", true).putString("pending_start_id", id)
+            .putString("last_config_payload", previous).commit())
+        val intent = Intent(context, FrpcService::class.java).setAction("com.frp.frp_app.action.START")
+            .putExtra("start_id", id).putExtra("config_content", config)
+        if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
+        assertTrue(waitUntil { FrpcService.instance?.isFrpcRunning() == true && !prefs.contains("pending_start_id") })
+        assertEquals(config, SecureStringCodec.decrypt(checkNotNull(prefs.getString("last_config_payload", null))))
+    }
+
+    @Test
+    fun recoveryStartsPersistedPendingConfigWhenAndroidLostTheIntent() {
+        val config = configText() + "\n# pending config"
+        val prefs = context.getSharedPreferences("frp_state", Context.MODE_PRIVATE)
+        val oldPayload = SecureStringCodec.encrypt(configText() + "\n# previous config")
+        val pendingPayload = SecureStringCodec.encrypt(config)
+        assertTrue(prefs.edit().putBoolean("was_running", true).putString("pending_start_id", UUID.randomUUID().toString())
+            .putString("last_config_payload", oldPayload).putString("pending_config_payload", pendingPayload).commit())
+        BootReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        assertTrue(waitUntil { FrpcService.instance?.isFrpcRunning() == true && !prefs.contains("pending_start_id") })
+        assertEquals(pendingPayload, prefs.getString("last_config_payload", null))
+        assertFalse(prefs.contains("pending_config_payload"))
+    }
+
+    @Test
+    fun onlyARealRebootRevokesAnUndeliverableLegacyPendingStart() {
+        val prefs = context.getSharedPreferences("frp_state", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putBoolean("was_running", true).putString("pending_start_id", "legacy-id")
+            .putString("last_config_payload", SecureStringCodec.encrypt(configText())).commit())
+        FrpcService.ensureRunning(context)
+        assertTrue(FrpcService.isRunRequested(context))
+        assertEquals("legacy-id", prefs.getString("pending_start_id", null))
+        BootReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        assertFalse(FrpcService.isRunRequested(context))
+        assertFalse(prefs.contains("pending_start_id"))
+        assertTrue(FrpcService.instance == null)
+    }
+
+    @Test
     fun failedInitialStartCommitCannotScheduleOrLeaveGhostRunIntent() {
         FrpcService.stop(context)
         waitUntil { FrpcService.instance == null }
@@ -78,6 +203,27 @@ class FrpcServiceIntegrationTest {
         Thread.sleep(500)
         assertTrue(FrpcService.instance == null)
         assertFalse(FrpcService.isRunRequested(context))
+    }
+
+    @Test
+    fun failedReplacementRestoresBothPreviousPayloadsAndTheirRequestId() {
+        val prefs = context.getSharedPreferences("frp_state", Context.MODE_PRIVATE)
+        val previous = SecureStringCodec.encrypt(configText() + "\n# committed")
+        val pending = SecureStringCodec.encrypt(configText() + "\n# pending")
+        assertTrue(prefs.edit().putBoolean("was_running", true).putString("pending_start_id", "old-request")
+            .putString("last_config_payload", previous).putString("pending_config_payload", pending).commit())
+        assertFalse(FrpcService.startWithCommitForTest(context, configText() + "\n# replacement") {
+            assertTrue(it.commit())
+            false
+        })
+        val unresolved = object : ContextWrapper(context) {
+            override fun startForegroundService(service: Intent): ComponentName? = null
+            override fun startService(service: Intent): ComponentName? = null
+        }
+        assertFalse(FrpcService.start(unresolved, configText() + "\n# undeliverable"))
+        assertEquals("old-request", prefs.getString("pending_start_id", null))
+        assertEquals(previous, prefs.getString("last_config_payload", null))
+        assertEquals(pending, prefs.getString("pending_config_payload", null))
     }
 
     @Test
@@ -322,8 +468,8 @@ class FrpcServiceIntegrationTest {
     }
 
     @Test
-    fun foregroundLifecycleRunsOnAndroid15Or16() {
-        assumeTrue(Build.VERSION.SDK_INT == 35 || Build.VERSION.SDK_INT == 36)
+    fun foregroundServiceStartsAndStopsOnAndroid15AndLater() {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM)
         val config = configText()
 
         assertTrue(FrpcService.start(context, config))
@@ -454,11 +600,18 @@ class FrpcServiceIntegrationTest {
     fun logReaderBoundsPhysicalLinesAndRecoversAtEveryLineEnding() {
         val lines = mutableListOf<String>()
         val oversized = "x".repeat(1_000_000)
+        var cleanups = 0
 
         FrpcService.readBoundedLogLines(
             StringReader("first\r\nsecond\rthird\n$oversized\nlast"),
+            onFirstLine = {
+                assertTrue(lines.isEmpty())
+                cleanups++
+            },
         ) { lines += it }
 
+        FrpcService.readBoundedLogLines(StringReader(""), onFirstLine = { cleanups++ }) { lines += it }
+        assertEquals(1, cleanups)
         assertEquals(5, lines.size)
         assertEquals(listOf("first", "second", "third"), lines.take(3))
         assertTrue(lines[3].length <= 4_096)
@@ -518,7 +671,7 @@ class FrpcServiceIntegrationTest {
     fun malformedConfigCanTriggerOnlyOneStunDnsLookup() {
         val config = (1..100).joinToString("\n") {
             "natHoleStunServer = \"stun$it.example.test:3478\""
-        }
+        } + "\n[[visitors]]\ntype = \"xtcp\""
         val lookups = AtomicInteger(0)
 
         val patched = FrpcService.patchFirstStunEndpoint(config) { host ->
@@ -527,9 +680,7 @@ class FrpcServiceIntegrationTest {
         }
 
         assertEquals(1, lookups.get())
-        assertTrue(patched.startsWith("natHoleStunServer = \"192.0.2.1:3478\"\n"))
-        assertTrue(patched.contains("natHoleStunServer = \"stun2.example.test:3478\""))
-        assertTrue(patched.endsWith("natHoleStunServer = \"stun100.example.test:3478\""))
+        assertEquals(config.replaceFirst("stun1.example.test", "192.0.2.1"), patched)
     }
 
     @Test
@@ -745,7 +896,7 @@ class FrpcServiceIntegrationTest {
         val late = byteArrayOf(4, 5, 6)
         val completion = MainThreadResult(result) { completionCount.incrementAndGet() }
 
-        Thread {
+        val worker = Thread {
             completion.success(first) {
                 Arrays.fill(first, 0)
                 cleanupCount.incrementAndGet()
@@ -754,7 +905,10 @@ class FrpcServiceIntegrationTest {
                 Arrays.fill(late, 0)
                 cleanupCount.incrementAndGet()
             }
-        }.start()
+        }
+        worker.start()
+        worker.join(3_000)
+        assertFalse("Result producer did not finish", worker.isAlive)
 
         assertTrue(callbackLatch.await(3, TimeUnit.SECONDS))
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
@@ -924,6 +1078,16 @@ class FrpcServiceIntegrationTest {
 
         assertTrue(waitUntil { !runtimeConfig.exists() })
         assertTrue(waitUntil { FrpcService.instance == null })
+    }
+
+    @Test
+    fun recoverySkipsStunDnsForRelayAndAlreadyProbedP2pAddresses() {
+        for ((type, host) in listOf("stcp" to "stun.example.test", "xtcp" to "192.0.2.1")) {
+            val config = "natHoleStunServer = \"$host:3478\"\n[[visitors]]\ntype = \"$type\""
+            assertEquals(config, FrpcService.patchFirstStunEndpoint(config) {
+                error("Unexpected STUN DNS query")
+            })
+        }
     }
 
     private fun configText(): String =

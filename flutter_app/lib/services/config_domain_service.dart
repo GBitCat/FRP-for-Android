@@ -181,9 +181,7 @@ class ConfigDomainService {
     Map<String, ConnectionType> appStatuses,
   ) {
     final rows = <AppRow>[];
-    final grouped = configs.where((e) => e.isInGroup()).toList();
-    for (final groupId in grouped.map((e) => e.groupId).toSet()) {
-      final members = grouped.where((e) => e.groupId == groupId).toList();
+    for (final members in _membersByGroup(configs).values) {
       final primary = members.firstWhere(
         (e) => e.isGroupPrimary,
         orElse: () => members.first,
@@ -228,19 +226,32 @@ class ConfigDomainService {
     );
   }
 
+  static Map<(int, String), List<FrpConfig>> _membersByGroup(
+    List<FrpConfig> configs,
+  ) {
+    final byGroup = <(int, String), List<FrpConfig>>{};
+    for (final config in configs.where((config) => config.isInGroup())) {
+      (byGroup[(config.groupId, config.serverId)] ??= []).add(config);
+    }
+    return byGroup;
+  }
+
   static List<ConfigGroup> buildGroups(List<FrpConfig> configs) {
     final result = <ConfigGroup>[];
-    final grouped = configs.where((e) => e.isInGroup()).toList();
-    final ids = grouped.map((e) => e.groupId).toSet().toList()..sort();
-    for (final id in ids) {
-      final members = grouped.where((e) => e.groupId == id).toList();
+    final groups = _membersByGroup(configs).entries.toList()
+      ..sort((a, b) {
+        final order = a.key.$1.compareTo(b.key.$1);
+        return order == 0 ? a.key.$2.compareTo(b.key.$2) : order;
+      });
+    for (final group in groups) {
+      final members = group.value;
       final primary = members.firstWhere(
         (e) => e.isGroupPrimary,
         orElse: () => members.first,
       );
       result.add(
         ConfigGroup(
-          groupId: id,
+          groupId: primary.groupId,
           groupName: displayName(primary),
           primary: primary,
           members: members,

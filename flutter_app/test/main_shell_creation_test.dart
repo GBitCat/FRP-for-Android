@@ -211,8 +211,8 @@ void main() {
         .last;
     await tester.ensureVisible(content);
     await tester.enterText(content, '''[[visitors]]
-name = "shell-manual"
-type = "stcp"
+name = 'shell-manual'
+"type" = 'stcp'
 serverName = "provider"
 secretKey = "test-secret"
 bindAddr = "127.0.0.1"

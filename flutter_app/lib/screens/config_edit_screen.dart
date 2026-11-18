@@ -48,6 +48,7 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
   bool _useFallback = false;
 
   int _originalGroupId = 0;
+  String _originalServerId = '';
   final Set<int> _editingConfigIds = {};
   final List<FrpConfig> _originalSources = [];
   final List<FrpConfig> _originalFallbacks = [];
@@ -129,6 +130,7 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
 
   void _initializeExisting(FrpConfig selected) {
     _originalGroupId = selected.groupId;
+    _originalServerId = selected.serverId;
     _serverId =
         appState.servers.any((server) => server.serverId == selected.serverId)
         ? selected.serverId
@@ -140,6 +142,7 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
               .where(
                 (config) =>
                     config.groupId == selected.groupId &&
+                    config.serverId == selected.serverId &&
                     (config.manualToml == null ||
                         config.manualToml!.trim().isEmpty),
               )
@@ -603,6 +606,7 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
               .where(
                 (config) =>
                     config.groupId == _originalGroupId &&
+                    config.serverId == _originalServerId &&
                     !_editingConfigIds.contains(config.id),
               )
               .toList()
@@ -610,7 +614,14 @@ class _ConfigEditScreenState extends State<ConfigEditScreen> {
     final grouped =
         collection.configs.length + preservedGroupMembers.length > 1;
     var groupId = _originalGroupId;
-    if (grouped && groupId <= 0) {
+    final destinationHasGroup =
+        _originalServerId != _effectiveServerId &&
+        appState.configs.any(
+          (config) =>
+              config.serverId == _effectiveServerId &&
+              config.groupId == groupId,
+        );
+    if (grouped && (groupId <= 0 || destinationHasGroup)) {
       groupId = DateTime.now().millisecondsSinceEpoch;
       while (appState.configs.any((config) => config.groupId == groupId)) {
         groupId += 1;

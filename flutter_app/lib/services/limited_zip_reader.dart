@@ -7,6 +7,9 @@ import 'package:archive/archive.dart';
 /// stream, so forged size metadata cannot turn a small archive into an
 /// unbounded allocation.
 abstract final class LimitedZipReader {
+  // Use the same compile-time flag as Flutter without coupling ZIP I/O to UI.
+  static const _releaseMode = bool.fromEnvironment('dart.vm.product');
+
   static Map<String, Uint8List> readRequiredFiles(
     List<int> bytes, {
     required Set<String> requiredFileNames,
@@ -100,12 +103,15 @@ abstract final class LimitedZipReader {
     try {
       for (final header in headers) {
         if (!requiredFileNames.contains(header.filename)) continue;
-        final output = _BoundedOutputStream(maxEntryBytes);
-        Uint8List? content;
-        var retained = false;
+        // Every central-directory size has already passed the per-entry and
+        // total limits. The stream independently checks every decoder write.
+        final output = _BoundedOutputStream(
+          _releaseMode ? header.uncompressedSize : maxEntryBytes,
+        );
+        var transferred = false;
         try {
           header.file!.decompress(output);
-          content = output.getBytes();
+          final content = output.subset(0);
           if (content.length != header.uncompressedSize ||
               getCrc32(content) != header.crc32) {
             throw const FormatException(
@@ -116,11 +122,12 @@ abstract final class LimitedZipReader {
           if (actualTotal > maxTotalBytes) {
             throw const FormatException('ZIP expanded size exceeds the limit');
           }
-          result[header.filename] = content;
-          retained = true;
+          // The caller owns and wipes the validated bytes. A release entry
+          // fills its entire allocation, so it can transfer ownership here.
+          result[header.filename] = _releaseMode ? content : output.getBytes();
+          transferred = _releaseMode;
         } finally {
-          output.erase();
-          if (!retained) content?.fillRange(0, content.length, 0);
+          if (!transferred) output.erase();
         }
       }
       return result;

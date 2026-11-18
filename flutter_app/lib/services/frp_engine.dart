@@ -1,19 +1,34 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../models/connection_status.dart';
 import 'stun_server_selector.dart';
 
+typedef RuntimeLog = ({int id, String line});
+
 /// frpc 引擎：通过 MethodChannel 调用原生 frpc 进程，并接收状态/日志事件
 class FrpEngine {
-  FrpEngine._() {
+  FrpEngine._()
+    : this.withChannel(
+        const MethodChannel('com.frp.app/engine'),
+        nativeLogHistory: kReleaseMode,
+      );
+
+  @visibleForTesting
+  FrpEngine.withChannel(this._channel, {required bool nativeLogHistory})
+    : _logs = nativeLogHistory ? null : ListQueue<RuntimeLog>() {
     _channel.setMethodCallHandler(_onNativeCall);
+    if (nativeLogHistory) {
+      _logController.onListen = () => unawaited(_setLogSubscription(true));
+      _logController.onCancel = () => unawaited(_setLogSubscription(false));
+    }
   }
   static final FrpEngine instance = FrpEngine._();
 
-  static const _channel = MethodChannel('com.frp.app/engine');
+  final MethodChannel _channel;
 
   final _statusController = StreamController<ConnectionStatus>.broadcast();
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
@@ -23,8 +38,8 @@ class FrpEngine {
   Stream<Map<String, ConnectionType>> get appStatusesStream =>
       _appStatusesController.stream;
 
-  final _logController = StreamController<String>.broadcast();
-  Stream<String> get logStream => _logController.stream;
+  final _logController = StreamController<RuntimeLog>.broadcast();
+  Stream<RuntimeLog> get logStream => _logController.stream;
 
   ConnectionStatus _serverStatus = const ConnectionStatus();
   ConnectionStatus get serverStatus => _serverStatus;
@@ -32,8 +47,25 @@ class FrpEngine {
   Map<String, ConnectionType> _appStatuses = {};
   Map<String, ConnectionType> get appStatuses => _appStatuses;
 
-  final ListQueue<String> _logs = ListQueue<String>();
-  List<String> get logs => List.unmodifiable(_logs);
+  final ListQueue<RuntimeLog>? _logs;
+  List<RuntimeLog> get logs =>
+      _logs == null ? const [] : List.unmodifiable(_logs);
+
+  Future<void> _setLogSubscription(bool enabled) async {
+    try {
+      await _channel.invokeMethod<void>('setLogSubscription', enabled);
+    } on MissingPluginException {
+      // The activity can detach while the log route is closing.
+    } on PlatformException {
+      // The native service still owns the history for the next snapshot.
+    }
+  }
+
+  Iterable<RuntimeLog> _rows(int firstId, List<Object?> lines) sync* {
+    for (var i = 0; i < lines.length; i++) {
+      yield (id: firstId + i, line: lines[i] as String);
+    }
+  }
 
   Future<dynamic> _onNativeCall(MethodCall call) async {
     switch (call.method) {
@@ -57,10 +89,22 @@ class FrpEngine {
         _appStatusesController.add(_appStatuses);
         break;
       case 'onLog':
-        final line = call.arguments as String? ?? '';
-        _logs.add(line);
-        if (_logs.length > 2000) _logs.removeFirst();
-        _logController.add(line);
+        final [int id, String line] = call.arguments as List;
+        final record = (id: id, line: line);
+        final logs = _logs;
+        if (logs != null) {
+          logs.add(record);
+          if (logs.length > 2000) logs.removeFirst();
+        }
+        _logController.add(record);
+        break;
+      case 'onLogBatch':
+        if (!_logController.hasListener) break;
+        if (call.arguments case {'firstId': int firstId, 'lines': List lines}) {
+          for (final row in _rows(firstId, lines)) {
+            _logController.add(row);
+          }
+        }
         break;
     }
   }
@@ -73,6 +117,9 @@ class FrpEngine {
     'error' => ConnectionType.error,
     _ => ConnectionType.unknown,
   };
+
+  Future<void> requestTunnelPermissions() =>
+      _channel.invokeMethod<void>('requestTunnelPermissions');
 
   /// 启动 frpc。TOML 只在原生服务内短暂落盘，避免 Dart 层留下明文文件。
   Future<bool> start(
@@ -211,11 +258,19 @@ class FrpEngine {
     return 0;
   }
 
-  Future<String> readLogs() async {
+  Future<List<RuntimeLog>> readLogSnapshot() async {
     try {
-      final v = await _channel.invokeMethod<String>('readLogs');
-      if (v != null && v.isNotEmpty) return v;
-    } catch (_) {}
-    return _logs.join('\n');
+      final snapshot = await _channel.invokeMapMethod<String, Object?>(
+        'readLogSnapshot',
+      );
+      if (snapshot case {'firstId': int firstId, 'lines': List lines}) {
+        return _rows(firstId, lines).toList(growable: false);
+      }
+    } on PlatformException {
+      // The Dart buffer still holds logs delivered while the channel was attached.
+    } on MissingPluginException {
+      // The caller may run without an attached Android activity.
+    }
+    return logs;
   }
 }

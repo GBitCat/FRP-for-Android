@@ -195,7 +195,7 @@ void main() {
       expect(find.byType(ConfigsScreen), findsOneWidget);
       expect(find.text('Manage'), findsOneWidget);
       expect(find.text('Swipe left to delete'), findsNothing);
-      await _swipe(tester, 'config_swipe_group_7');
+      await _swipe(tester, 'config_swipe_group_SERVER01_7');
       expect(find.text('Delete Group'), findsNothing);
       expect(appState.configs, hasLength(2));
       expect(tester.takeException(), isNull);
@@ -208,15 +208,18 @@ void main() {
     await _openList(tester);
     await tester.tap(find.byKey(const ValueKey('config_manage')));
     await tester.pumpAndSettle();
-    await _swipe(tester, 'config_swipe_group_7');
+    await _swipe(tester, 'config_swipe_group_SERVER01_7');
     expect(find.text('Delete Group'), findsOneWidget);
     await _pressTextButton(tester, 'Cancel');
     expect(appState.configs, hasLength(3));
 
-    await _swipe(tester, 'config_swipe_group_7');
+    await _swipe(tester, 'config_swipe_group_SERVER01_7');
     await _pressTextButton(tester, 'Delete');
     expect(appState.configs.single.id, 1);
-    expect(find.byKey(const ValueKey('config_swipe_group_7')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('config_swipe_group_SERVER01_7')),
+      findsNothing,
+    );
     final saved = await tester.runAsync(
       () => ConfigStore().loadConfigurationSnapshot(),
     );

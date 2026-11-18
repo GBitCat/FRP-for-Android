@@ -12,25 +12,40 @@ import 'package:frp_app/theme.dart';
 
 class _FakeLogsSource implements LogsSource {
   _FakeLogsSource({String? history}) {
-    if (history != null) initialHistory.complete(history);
+    if (history != null) completeHistory(history);
   }
 
-  final initialHistory = Completer<String>();
-  final _events = StreamController<String>.broadcast(sync: true);
-  final _recent = <String>[];
+  final initialHistory = Completer<List<RuntimeLog>>();
+  final _events = StreamController<RuntimeLog>.broadcast(sync: true);
+  final _recent = <RuntimeLog>[];
+  var lastId = 0;
 
   @override
-  Stream<String> get logStream => _events.stream;
+  Stream<RuntimeLog> get logStream => _events.stream;
 
   @override
-  List<String> get logs => List.unmodifiable(_recent);
+  List<RuntimeLog> get logs => List.unmodifiable(_recent);
 
   @override
-  Future<String> readLogs() => initialHistory.future;
+  Future<List<RuntimeLog>> readLogs() => initialHistory.future;
 
-  void emit(String line) {
-    _recent.add(line);
-    _events.add(line);
+  void completeHistory(String text, {int firstId = 1}) {
+    final rows = text.isEmpty ? <String>[] : text.split('\n');
+    final snapshot = [
+      for (int i = 0; i < rows.length; i++) (id: firstId + i, line: rows[i]),
+    ];
+    if (snapshot.isNotEmpty && snapshot.last.id > lastId) {
+      lastId = snapshot.last.id;
+    }
+    initialHistory.complete(snapshot);
+  }
+
+  void emit(String line, {int? id}) {
+    final seq = id ?? lastId + 1;
+    if (seq > lastId) lastId = seq;
+    final record = (id: seq, line: line);
+    _recent.add(record);
+    _events.add(record);
   }
 
   Future<void> close() => _events.close();
@@ -270,8 +285,8 @@ void main() {
   ) async {
     final source = _FakeLogsSource();
     await _open(tester, source);
-    source.emit('new first');
-    source.initialHistory.complete('old history\nnew first');
+    source.emit('new first', id: 2);
+    source.completeHistory('old history\nnew first');
     source.emit('new second');
     await tester.pumpAndSettle();
     expect(find.text('old history'), findsOneWidget);
@@ -285,6 +300,97 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('repeat'), findsNWidgets(2));
     expect(find.text('5 lines'), findsOneWidget);
+  });
+
+  testWidgets(
+    'late snapshot events and repeated text retain distinct identities',
+    (tester) async {
+      final source = _FakeLogsSource(history: 'identical');
+      await _open(tester, source);
+      source.emit(
+        'identical',
+        id: 1,
+      ); // callback for a row already in the snapshot
+      source.emit('identical', id: 2); // a new event with identical text
+      await tester.pumpAndSettle();
+      expect(find.text('identical'), findsNWidgets(2));
+      expect(find.text('2 lines'), findsOneWidget);
+
+      source.emit('identical', id: 3);
+      await tester.pump(const Duration(milliseconds: 201));
+      await tester.pumpAndSettle();
+      expect(find.text('3 lines'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a new identical live row is retained while loading the snapshot',
+    (tester) async {
+      final source = _FakeLogsSource();
+      await _open(tester, source);
+      source.emit('identical', id: 2);
+      source.completeHistory('identical');
+      await tester.pumpAndSettle();
+      expect(find.text('identical'), findsNWidgets(2));
+    },
+  );
+
+  testWidgets(
+    'eviction removes stale owner filters and retains the newest 2000 rows',
+    (tester) async {
+      final config = _config();
+      final owned = _event(config, _games());
+      final source = _FakeLogsSource(history: owned);
+      List<String>? saved;
+      await _open(
+        tester,
+        source,
+        saveLogs: (rows, {required filtered}) async {
+          saved = rows;
+          return true;
+        },
+      );
+      await _selectCategory(tester, 'Socks5');
+      await _selectMenu(tester, 'logs_configuration', 'Gaming');
+      await _selectMenu(tester, 'logs_ports', 'Games');
+      for (var i = 1; i <= 2000; i++) {
+        source.emit('record $i');
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('All configurations'), findsOneWidget);
+      expect(find.text('0 lines'), findsOneWidget);
+      await _selectCategory(tester, 'All');
+      await tester.tap(find.byKey(const ValueKey('logs_save')));
+      await tester.pumpAndSettle();
+      expect(saved, hasLength(2000));
+      expect(saved!.first, 'record 1');
+      expect(saved!.last, 'record 2000');
+    },
+  );
+
+  testWidgets('export includes filtered rows still in the display cooldown', (
+    tester,
+  ) async {
+    final source = _FakeLogsSource(history: 'initial');
+    List<String>? saved;
+    await _open(
+      tester,
+      source,
+      saveLogs: (rows, {required filtered}) async {
+        saved = rows;
+        return true;
+      },
+    );
+    await tester.enterText(find.byType(TextField), 'match');
+    source.emit('match visible');
+    await tester.pump();
+    await tester.pump();
+    source.emit('match pending');
+    source.emit('ignored');
+    expect(find.text('match pending'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('logs_save')));
+    await tester.pumpAndSettle();
+    expect(saved, ['match visible', 'match pending']);
   });
 
   testWidgets('SOCKS filters group named Ports across protocols and servers', (
@@ -526,7 +632,7 @@ void main() {
     await _open(tester, source);
     source.emit('new log');
     await tester.pumpWidget(const SizedBox.shrink());
-    source.initialHistory.complete('old log\nnew log');
+    source.completeHistory('old log\nnew log');
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
@@ -633,7 +739,7 @@ void main() {
   testWidgets('save waits for native history and disables an empty result', (
     tester,
   ) async {
-    final source = _FakeLogsSource()..emit('[frpc] live line');
+    final source = _FakeLogsSource()..emit('[frpc] live line', id: 2);
     await _open(
       tester,
       source,
@@ -641,7 +747,7 @@ void main() {
     );
     expect(find.text('[frpc] live line'), findsOneWidget);
     expect(_saveButton(tester).onPressed, isNull);
-    source.initialHistory.complete('[frpc] old history\n[frpc] live line');
+    source.completeHistory('[frpc] old history\n[frpc] live line');
     await tester.pumpAndSettle();
     expect(_saveButton(tester).onPressed, isNotNull);
     await tester.enterText(find.byType(TextField), 'no matching entry');
